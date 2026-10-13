@@ -1,0 +1,44 @@
+
+name: Build Daleel Iraq APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Prepare project
+        run: |
+          mkdir -p lib
+          if [ -f main.dart ] && [ ! -f lib/main.dart ]; then
+            cp main.dart lib/main.dart
+          fi
+          flutter create --platforms=android,ios .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Android APK
+        run: flutter build apk --debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: daleel-iraq-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
