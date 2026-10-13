@@ -29,8 +29,20 @@ jobs:
           if [ -f main.dart ] && [ ! -f lib/main.dart ]; then
             cp main.dart lib/main.dart
           fi
+         
           flutter create --platforms=android,ios .
-
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          permissions = '''
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+          '''
+          s = s.replace('<application', permissions + '\n    <application', 1)
+          p.write_text(s)
+          PY
       - name: Install dependencies
         run: flutter pub get
 
