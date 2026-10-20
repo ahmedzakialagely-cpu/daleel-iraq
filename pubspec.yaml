@@ -1,5 +1,5 @@
 name: daleel_iraq
-description: تطبيق ملاحة عراقي تجريبي متعدد المنصات.
+description: تطبيق دليل العراق للملاحة والبحث عن الأماكن
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -9,12 +9,25 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
   flutter_localizations:
     sdk: flutter
+
+  # عرض الخرائط
   flutter_map: ^8.2.1
   latlong2: ^0.9.1
+
+  # تحديد الموقع باستخدام GPS
   geolocator: ^14.0.2
+
+  # البحث عن الأماكن والاتصال بخدمات الخرائط
   http: ^1.4.0
+
+  # التعليمات الصوتية
+  flutter_tts: ^4.2.3
+
+  # فتح تطبيقات الخرائط والملاحة
+  url_launcher: ^6.3.2
 
 flutter:
   uses-material-design: true
