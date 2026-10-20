@@ -21,7 +21,7 @@ class DaleelIraqApp extends StatefulWidget {
 }
 
 class _DaleelIraqAppState extends State<DaleelIraqApp> {
-  bool darkMode = false; // افتراضياً نخليه على ستايل ويز النهاري الفاتح والأنيق
+  bool darkMode = false;
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +34,7 @@ class _DaleelIraqAppState extends State<DaleelIraqApp> {
         useMaterial3: true,
         brightness: brightness,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF33CC66), // لون أخضر قريب من ستايل Waze
+          seedColor: const Color(0xFF22B14C),
           brightness: brightness,
         ),
         scaffoldBackgroundColor:
@@ -95,7 +95,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
   String _statusMessage = 'أهلاً بك في دليل العراق';
   String _destinationName = '';
 
-  // ألوان مستوحاة بدقة من واجهة وتصميم Waze
   Color get _wazeGreen => const Color(0xFF22B14C);
   Color get _wazeBlue => const Color(0xFF0099FF);
 
@@ -438,7 +437,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
           ),
         );
       }
-      _showMessage('تم حساب المسار بنجاح بنمط Waze');
+      _showMessage('تم حساب المسار بنجاح');
     } catch (_) {
       if (!mounted) return;
       setState(() => _statusMessage = 'تعذّر حساب الطريق');
@@ -558,7 +557,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       height: 54,
       decoration: BoxDecoration(
         color: _panelColor,
-        borderRadius: BorderRadius.circular(27), // تصميم دائري ناعم مثل Waze
+        borderRadius: BorderRadius.circular(27),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.12),
@@ -614,7 +613,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
           children: [
             Row(
               children: [
-                // الشعار بتصميم Waze العصري
                 Container(
                   width: 44,
                   height: 44,
@@ -648,7 +646,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                         ),
                       ),
                       Text(
-                        'الملاحة الذكية بستايل ويز',
+                        'الملاحة الذكية',
                         style: TextStyle(
                           color: _mutedColor,
                           fontSize: 11,
@@ -874,10 +872,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // استخدمنا خريطة تتميز بألوان ناعمة ومريحة ومباني واضحة تشبه نمط Waze العصري
+    // تم استخدام مزود OpenStreetMap مجاني ونظيف بالكامل وبدون أي اشتراك أو مفتاح API
     final tileUrl = widget.darkMode
-        ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png' // بديل ليلى عصري وناعم
-        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'; // ستايل Voyager الفاتح يشبه خرائط Waze المريحة
+        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' // خريطة داكنة مجانية بالكامل
+        : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'; // خريطة افتتاحية واضحة ومجانية
 
     return Scaffold(
       body: Stack(
@@ -908,7 +906,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 if (_routePoints.isNotEmpty)
                   PolylineLayer(
                     polylines: [
-                      // خط مسار أزرق سميك وبارز مثل Waze
                       Polyline(
                         points: _routePoints,
                         strokeWidth: 10,
@@ -944,7 +941,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 ),
                 RichAttributionWidget(
                   attributions: [
-                    TextSourceAttribution('Waze-Style CartoDB / OSM'),
+                    TextSourceAttribution('OpenStreetMap contributors'),
                   ],
                 ),
               ],
