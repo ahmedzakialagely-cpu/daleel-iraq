@@ -101,9 +101,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
     });
   }
 
+  // تحديد موقع المستخدم
   Future<void> _initializeLocation() async {
     try {
-      bool serviceEnabled =
+      final serviceEnabled =
           await Geolocator.isLocationServiceEnabled();
 
       if (!serviceEnabled) {
@@ -118,19 +119,15 @@ class _NavigationScreenState extends State<NavigationScreen> {
         permission = await Geolocator.requestPermission();
       }
 
-      if (permission == LocationPermission.denied) {
-        _setStatus('يرجى السماح للتطبيق باستخدام الموقع');
-        return;
-      }
-
-      if (permission == LocationPermission.deniedForever) {
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
         _setStatus(
-          'افتح إعدادات التطبيق واسمح بالوصول إلى الموقع',
+          'اسمح للتطبيق بالوصول إلى موقعك من الإعدادات',
         );
         return;
       }
 
-      Position position = await Geolocator.getCurrentPosition(
+      final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
         ),
@@ -143,14 +140,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
           position.latitude,
           position.longitude,
         );
-
         _hasLocation = true;
         _status = 'تم تحديد موقعك';
       });
 
       _mapController.move(_myLocation, 16);
     } catch (e) {
-      _setStatus('تعذر تحديد الموقع. تحقق من GPS والإنترنت');
+      _setStatus('خطأ GPS: $e');
     }
   }
 
@@ -165,7 +161,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     _setStatus('هذا موقعك الحالي');
   }
 
-  // البحث عن الأماكن والعناوين باستخدام OpenStreetMap
+  // البحث عن الأماكن داخل العراق
   Future<void> _searchPlaces() async {
     final query = _searchController.text.trim();
 
@@ -199,14 +195,15 @@ class _NavigationScreenState extends State<NavigationScreen> {
           'User-Agent': 'DaleelIraqNavigation/1.0',
           'Accept-Language': 'ar',
         },
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(const Duration(seconds: 25));
 
       if (response.statusCode != 200) {
-        throw Exception('فشل البحث');
+        throw Exception(
+          'خدمة البحث أعادت HTTP ${response.statusCode}',
+        );
       }
 
-      final List<dynamic> results =
-          jsonDecode(response.body) as List<dynamic>;
+      final results = jsonDecode(response.body) as List<dynamic>;
 
       if (!mounted) return;
 
@@ -215,7 +212,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       });
 
       if (results.isEmpty) {
-        _setStatus('ما لكيت المكان. جرّب اسم أو عنوان آخر');
+        _setStatus('ما لكيت المكان. جرّب اسم ثاني');
         return;
       }
 
@@ -225,7 +222,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
       setState(() {
         _isSearching = false;
-        _status = 'فشل البحث. تحقق من اتصال الإنترنت';
+        _status = 'فشل البحث: $e';
       });
     }
   }
@@ -291,18 +288,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
     Map<String, dynamic> item,
   ) async {
     try {
-      final latitude =
-          double.parse(item['lat'].toString());
-
-      final longitude =
-          double.parse(item['lon'].toString());
-
-      final name =
-          item['display_name']?.toString() ?? 'الوجهة';
+      final latitude = double.parse(item['lat'].toString());
+      final longitude = double.parse(item['lon'].toString());
 
       setState(() {
         _destination = LatLng(latitude, longitude);
-        _destinationName = name;
+        _destinationName =
+            item['display_name']?.toString() ?? 'الوجهة';
         _routePoints = [];
         _routeSteps = [];
         _instruction = 'اضغط حساب الطريق';
@@ -315,12 +307,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
       );
 
       await _calculateRoute();
-    } catch (_) {
-      _setStatus('تعذر تحديد إحداثيات المكان');
+    } catch (e) {
+      _setStatus('تعذر تحديد الوجهة: $e');
     }
   }
 
-  // حساب الطريق من موقع المستخدم إلى الوجهة
+  // حساب الطريق
   Future<void> _calculateRoute() async {
     if (_destination == null) {
       _setStatus('اختار وجهتك أولاً');
@@ -342,38 +334,41 @@ class _NavigationScreenState extends State<NavigationScreen> {
     });
 
     try {
-      final uri = Uri.https(
-        'router.project-osrm.org',
-        '/route/v1/driving/'
-            '${_myLocation.longitude},${_myLocation.latitude};'
-            '${_destination!.longitude},${_destination!.latitude}',
-        {
-          'overview': 'full',
-          'geometries': 'geojson',
-          'steps': 'true',
-          'language': 'en',
-        },
+      // تكوين الرابط مباشرة لتجنب مشاكل تركيب الرابط
+      final uri = Uri.parse(
+        'https://router.project-osrm.org/route/v1/driving/'
+        '${_myLocation.longitude},${_myLocation.latitude};'
+        '${_destination!.longitude},${_destination!.latitude}'
+        '?overview=full&geometries=geojson&steps=true',
       );
 
-      final response = await http.get(uri).timeout(
-        const Duration(seconds: 30),
-      );
+      final response = await http.get(
+        uri,
+        headers: {
+          'User-Agent': 'DaleelIraqNavigation/1.0',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 35));
 
       if (response.statusCode != 200) {
-        throw Exception('تعذر حساب الطريق');
+        throw Exception(
+          'خدمة الطرق أعادت HTTP ${response.statusCode}',
+        );
       }
 
       final data =
           jsonDecode(response.body) as Map<String, dynamic>;
 
       if (data['code'] != 'Ok') {
-        throw Exception('لم يتم العثور على طريق');
+        throw Exception(
+          'خدمة الطرق: ${data['code']}',
+        );
       }
 
       final routes = data['routes'] as List<dynamic>;
 
       if (routes.isEmpty) {
-        throw Exception('لا يوجد طريق متاح');
+        throw Exception('لم يتم العثور على طريق');
       }
 
       final route = routes.first as Map<String, dynamic>;
@@ -395,10 +390,21 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
       final legs = route['legs'] as List<dynamic>;
 
+      if (legs.isEmpty) {
+        throw Exception('لا توجد تفاصيل للطريق');
+      }
+
       final leg = legs.first as Map<String, dynamic>;
 
-      final steps = (leg['steps'] as List<dynamic>)
-          .cast<Map<String, dynamic>>();
+      final rawSteps = leg['steps'] as List<dynamic>? ?? [];
+
+      final steps = rawSteps
+          .whereType<Map<String, dynamic>>()
+          .toList();
+
+      if (points.isEmpty) {
+        throw Exception('المسار الذي وصلنا فارغ');
+      }
 
       if (!mounted) return;
 
@@ -424,8 +430,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
       setState(() {
         _isCalculatingRoute = false;
-        _status =
-            'تعذر حساب الطريق. تحقق من الإنترنت وحاول مرة أخرى';
+        // إظهار الخطأ الحقيقي بدل رسالة عامة
+        _status = 'خطأ حساب الطريق: $e';
       });
     }
   }
@@ -487,8 +493,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
       await _calculateRoute();
     }
 
-    if (_routePoints.isEmpty || !mounted) {
-      _setStatus('تعذر تجهيز الطريق');
+    if (!mounted) return;
+
+    if (_routePoints.isEmpty) {
+      _setStatus('تعذر تجهيز الطريق. راجع رسالة الخطأ أعلاه');
       return;
     }
 
@@ -501,25 +509,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
       return;
     }
 
+    await _positionSubscription?.cancel();
+
     setState(() {
       _isNavigating = true;
       _status = 'الملاحة بدأت';
     });
 
-    _speakInstruction(
+    await _speakInstruction(
       'بدأت الملاحة إلى $_destinationName',
     );
 
-    await _positionSubscription?.cancel();
-
-    const settings = LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 5,
-    );
-
-    _positionSubscription =
-        Geolocator.getPositionStream(
-      locationSettings: settings,
+    _positionSubscription = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
+      ),
     ).listen(
       (Position position) {
         if (!mounted) return;
@@ -531,14 +536,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
           );
         });
 
-        // تحريك الخريطة لمتابعة المستخدم أثناء الملاحة
         if (_isNavigating) {
           _mapController.move(_myLocation, 17);
           _updateNavigationProgress();
         }
       },
       onError: (error) {
-        _setStatus('تعذر تحديث GPS أثناء الملاحة');
+        _setStatus('خطأ متابعة GPS: $error');
       },
     );
 
@@ -546,11 +550,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }
 
   Future<void> _updateNavigationProgress() async {
-    if (!_isNavigating || _routeSteps.isEmpty) return;
+    if (!_isNavigating ||
+        _routeSteps.isEmpty ||
+        _destination == null) {
+      return;
+    }
 
-    if (_destination == null) return;
-
-    final distanceCalculator = const Distance();
+    const distanceCalculator = Distance();
 
     final distanceToDestination = distanceCalculator(
       _myLocation,
@@ -558,6 +564,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
 
     if (distanceToDestination < 25) {
+      if (!mounted) return;
+
       setState(() {
         _instruction = 'وصلت إلى وجهتك';
         _status = 'تم الوصول';
@@ -565,12 +573,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
       });
 
       await _positionSubscription?.cancel();
-
-      _speakInstruction('لقد وصلت إلى وجهتك');
+      await _speakInstruction('لقد وصلت إلى وجهتك');
       return;
     }
 
-    // البحث عن أقرب نقطة على المسار
     int closestPointIndex = 0;
     double closestDistance = double.infinity;
 
@@ -586,7 +592,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
       }
     }
 
-    // تحديث المسافة والوقت التقريبيين المتبقيين
     double remainingMeters = 0;
 
     for (
@@ -600,12 +605,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
       );
     }
 
+    if (!mounted) return;
+
     setState(() {
       _remainingDistance = remainingMeters;
       _remainingDuration = remainingMeters / 8.3;
     });
 
-    // تحديد أقرب خطوة إرشادية
     int bestStep = _currentStepIndex;
     double bestStepDistance = double.infinity;
 
@@ -615,6 +621,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       i++
     ) {
       final step = _routeSteps[i];
+
       final maneuver =
           step['maneuver'] as Map<String, dynamic>?;
 
@@ -670,12 +677,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
       if (bestStep != _currentStepIndex ||
           _instruction != instruction) {
+        if (!mounted) return;
+
         setState(() {
           _currentStepIndex = bestStep;
           _instruction = instruction;
         });
 
-        _speakInstruction(instruction);
+        await _speakInstruction(instruction);
       }
     }
 
@@ -684,7 +693,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
       if (now.difference(_lastSpokenAt).inSeconds > 30) {
         _lastSpokenAt = now;
-        _speakInstruction(
+
+        await _speakInstruction(
           'انتبه إلى الطريق واتبع المسار الظاهر على الخريطة',
         );
       }
@@ -701,7 +711,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     if (type == 'arrive') {
       action = 'اقتربت من وجهتك';
     } else if (type == 'depart') {
-      action = 'واصل السير';
+      action = 'ابدأ السير';
     } else if (type == 'roundabout' ||
         type == 'rotary') {
       action = 'ادخل إلى الدوار';
@@ -712,7 +722,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     } else if (modifier == 'uturn') {
       action = 'استدر إلى الاتجاه المعاكس';
     } else if (type == 'turn') {
-      action = 'واصل السير حسب اتجاه الطريق';
+      action = 'اتبع اتجاه الطريق';
     } else {
       action = 'واصل السير';
     }
@@ -795,7 +805,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
       ),
       body: Column(
         children: [
-          // شريط البحث
           Padding(
             padding: const EdgeInsets.all(10),
             child: Row(
@@ -836,7 +845,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ),
           ),
 
-          // الخريطة
           Expanded(
             child: FlutterMap(
               mapController: _mapController,
@@ -930,7 +938,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ),
           ),
 
-          // لوحة المعلومات والملاحة
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(14),
@@ -962,11 +969,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
                       Expanded(
                         child: Text(
                           _status,
-                          maxLines: 2,
+                          maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 14,
-                          ),
+                          style: const TextStyle(fontSize: 14),
                         ),
                       ),
                     ],
@@ -994,10 +999,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              const Icon(
-                                Icons.route,
-                                size: 18,
-                              ),
+                              const Icon(Icons.route, size: 18),
                               const SizedBox(width: 6),
                               Text(
                                 _formatDistance(
@@ -1010,9 +1012,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
                                 size: 18,
                               ),
                               const SizedBox(width: 6),
-                              Text(
-                                _formatDuration(
-                                  _remainingDuration,
+                              Flexible(
+                                child: Text(
+                                  _formatDuration(
+                                    _remainingDuration,
+                                  ),
                                 ),
                               ),
                             ],
@@ -1032,9 +1036,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                             onPressed: _hasLocation
                                 ? _goToMyLocation
                                 : _initializeLocation,
-                            icon: const Icon(
-                              Icons.my_location,
-                            ),
+                            icon: const Icon(Icons.my_location),
                             label: const Text('موقعي'),
                           ),
                         ),
@@ -1049,8 +1051,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
-                                    child:
-                                        CircularProgressIndicator(
+                                    child: CircularProgressIndicator(
                                       strokeWidth: 2,
                                     ),
                                   )
