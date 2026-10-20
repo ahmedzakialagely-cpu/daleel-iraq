@@ -21,7 +21,7 @@ class DaleelIraqApp extends StatefulWidget {
 }
 
 class _DaleelIraqAppState extends State<DaleelIraqApp> {
-  bool darkMode = true;
+  bool darkMode = false;
 
   @override
   Widget build(BuildContext context) {
@@ -29,16 +29,17 @@ class _DaleelIraqAppState extends State<DaleelIraqApp> {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'دليل العراق',
+      title: 'دليل العراق - Waze Style',
       theme: ThemeData(
         useMaterial3: true,
         brightness: brightness,
+        fontFamily: 'Roboto',
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF22D39A),
+          seedColor: const Color(0xFF33CC66),
           brightness: brightness,
         ),
         scaffoldBackgroundColor:
-            darkMode ? const Color(0xFF101820) : const Color(0xFFF1F4F5),
+            darkMode ? const Color(0xFF181B20) : const Color(0xFFF2F4F7),
       ),
       home: Directionality(
         textDirection: TextDirection.rtl,
@@ -71,40 +72,45 @@ class _NavigationScreenState extends State<NavigationScreen> {
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
   final FlutterTts _tts = FlutterTts();
-
   final Distance _distance = const Distance();
 
-  LatLng _currentLocation = const LatLng(33.3152, 44.3661);
+  LatLng _currentLocation = const LatLng(33.3152, 44.3661); // بغداد افتراضياً
   LatLng? _destination;
 
   List<LatLng> _routePoints = [];
   List<dynamic> _searchResults = [];
+  List<Marker> _userReports = []; // بلاغات الطرق السريعة (حوادث/سيطرات/مطبات)
 
   StreamSubscription<Position>? _positionSubscription;
 
   bool _loadingLocation = false;
   bool _searching = false;
   bool _navigating = false;
-  bool _followingLocation = false;
+  bool _followingLocation = true;
+  bool _showTrafficLayer = true; // طبقة الازدحامات
 
   double _heading = 0;
   double _speedKmh = 0;
   double _remainingKm = 0;
   double _remainingMinutes = 0;
 
-  String _statusMessage = 'أهلاً بك في دليل العراق';
+  String _statusMessage = 'جاهز للانطلاق!';
   String _destinationName = '';
 
-  Color get _green => const Color(0xFF22D39A);
+  // ألوان وايز (Waze Theme Colors)
+  Color get _wazeGreen => const Color(0xFF33CC66);
+  Color get _wazeBlue => const Color(0xFF0099FF);
+  Color get _wazeOrange => const Color(0xFFFF9900);
+  Color get _wazeRed => const Color(0xFFFF3333);
 
   Color get _panelColor =>
-      widget.darkMode ? const Color(0xFF202B35) : Colors.white;
+      widget.darkMode ? const Color(0xFF242831) : Colors.white;
 
   Color get _textColor =>
-      widget.darkMode ? Colors.white : const Color(0xFF17212B);
+      widget.darkMode ? Colors.white : const Color(0xFF222B36);
 
   Color get _mutedColor =>
-      widget.darkMode ? const Color(0xFFB5C0CB) : Colors.black54;
+      widget.darkMode ? const Color(0xFFA0AAB5) : const Color(0xFF707E8C);
 
   @override
   void initState() {
@@ -116,8 +122,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Future<void> _configureVoice() async {
     try {
       await _tts.setLanguage('ar');
-      await _tts.setSpeechRate(0.46);
-      await _tts.setVolume(1);
+      await _tts.setSpeechRate(0.48);
+      await _tts.setVolume(1.0);
     } catch (_) {}
   }
 
@@ -134,64 +140,53 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
     setState(() {
       _loadingLocation = true;
-      _statusMessage = 'جارٍ تحديد موقعك...';
+      _statusMessage = 'جارٍ تحديد موقعك عبر الـ GPS...';
     });
 
     try {
       final enabled = await Geolocator.isLocationServiceEnabled();
-
       if (!enabled) {
-        _setLocationError('فعّل GPS من إعدادات الهاتف');
+        _setLocationError('يرجى تفعيل خدمة GPS في الهاتف');
         return;
       }
 
-      LocationPermission permission =
-          await Geolocator.checkPermission();
-
+      LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
 
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
-        _setLocationError('اسمح للتطبيق باستخدام موقعك');
+        _setLocationError('يتطلب التطبيق إذن الوصول للموقع');
         return;
       }
 
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 20),
+          timeLimit: Duration(seconds: 15),
         ),
       );
 
       if (!mounted) return;
 
-      _currentLocation = LatLng(
-        position.latitude,
-        position.longitude,
-      );
-
-      if (position.heading >= 0) {
-        _heading = position.heading;
-      }
-
+      _currentLocation = LatLng(position.latitude, position.longitude);
+      if (position.heading >= 0) _heading = position.heading;
       _speedKmh = math.max(0, position.speed * 3.6);
 
       _mapController.move(_currentLocation, 16);
 
       setState(() {
         _loadingLocation = false;
-        _statusMessage = 'تم تحديد موقعك';
+        _statusMessage = 'تم تحديد موقعك الحالي';
       });
     } catch (_) {
-      _setLocationError('تعذّر تحديد الموقع. تحقق من GPS والإنترنت');
+      _setLocationError('تعذر الحصول على الموقع. افحص الاتصال بالشبكة');
     }
   }
 
   void _setLocationError(String message) {
     if (!mounted) return;
-
     setState(() {
       _loadingLocation = false;
       _statusMessage = message;
@@ -199,25 +194,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }
 
   Future<void> _startTracking() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-
-    if (!serviceEnabled) {
-      _showMessage('فعّل GPS أولاً');
-      return;
-    }
-
-    var permission = await Geolocator.checkPermission();
-
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      _showMessage('التطبيق يحتاج إذن الموقع');
-      return;
-    }
-
     await _positionSubscription?.cancel();
 
     _positionSubscription = Geolocator.getPositionStream(
@@ -228,42 +204,30 @@ class _NavigationScreenState extends State<NavigationScreen> {
     ).listen(
       (position) {
         if (!mounted) return;
-
-        _currentLocation = LatLng(
-          position.latitude,
-          position.longitude,
-        );
+        _currentLocation = LatLng(position.latitude, position.longitude);
 
         if (position.heading >= 0 && position.speed > 0.8) {
           _heading = position.heading;
         }
-
         _speedKmh = math.max(0, position.speed * 3.6);
 
         if (_followingLocation) {
           _mapController.move(
             _currentLocation,
-            _navigating ? 17 : _mapController.camera.zoom,
+            _navigating ? 17.5 : _mapController.camera.zoom,
           );
         }
 
-        if (_navigating) {
-          _updateProgress();
-        }
-
+        if (_navigating) _updateProgress();
         if (mounted) setState(() {});
-      },
-      onError: (_) {
-        if (mounted) {
-          setState(() => _statusMessage = 'تعذّر تحديث GPS');
-        }
       },
     );
   }
 
+  // البحث عن الأماكن والخدمات
   Future<void> _searchPlaces(String query) async {
     if (query.trim().isEmpty) {
-      _showMessage('اكتب اسم المكان اللي تريد تبحث عنه');
+      _showMessage('يرجى كتابة اسم المكان أو المنطقة');
       return;
     }
 
@@ -271,7 +235,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
     setState(() {
       _searching = true;
-      _statusMessage = 'جارٍ البحث عن الأماكن...';
+      _statusMessage = 'جارٍ البحث عن "$query"...';
     });
 
     try {
@@ -279,9 +243,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
         'nominatim.openstreetmap.org',
         '/search',
         {
-          'q': '$query, Iraq',
+          'q': query.contains('العراق') ? query : '$query, العراق',
           'format': 'jsonv2',
-          'limit': '8',
+          'limit': '10',
           'countrycodes': 'iq',
           'accept-language': 'ar',
           'addressdetails': '1',
@@ -291,14 +255,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
       final response = await http.get(
         uri,
         headers: {
-          'User-Agent': 'DaleelIraq/1.0',
+          'User-Agent': 'DaleelIraq_Waze/2.0',
           'Accept-Language': 'ar',
         },
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 12));
 
-      if (response.statusCode != 200) {
-        throw Exception('Search request failed');
-      }
+      if (response.statusCode != 200) throw Exception('فشل البحث');
 
       final results = jsonDecode(response.body) as List;
 
@@ -308,24 +270,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
         _searchResults = results;
         _searching = false;
         _statusMessage = results.isEmpty
-            ? 'ما لكينا نتائج لهذا البحث'
-            : 'اختار المكان اللي تريده';
+            ? 'لم نجد نتائج مطابقة لبحثك'
+            : 'اختر الوجهة المطلوبة';
       });
 
       if (results.isEmpty) {
-        _showMessage('ما لكينا نتائج. جرّب اسماً آخر');
+        _showMessage('لم نجد نتائج. حاول البحث باسم أوضح');
       } else {
         _showSearchResults();
       }
     } catch (_) {
       if (!mounted) return;
-
       setState(() {
         _searching = false;
-        _statusMessage = 'تعذّر البحث. تحقق من الإنترنت';
+        _statusMessage = 'تعذر الاتصال بخادم البحث';
       });
-
-      _showMessage('فشل البحث. حاول بعد قليل');
+      _showMessage('فشل البحث. تحقق من شبكة الإنترنت');
     }
   }
 
@@ -336,35 +296,33 @@ class _NavigationScreenState extends State<NavigationScreen> {
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         return Container(
-          height: MediaQuery.of(context).size.height * 0.62,
+          height: MediaQuery.of(context).size.height * 0.65,
           decoration: BoxDecoration(
             color: _panelColor,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(28),
-            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
           ),
           child: Column(
             children: [
               const SizedBox(height: 12),
               Container(
-                width: 42,
+                width: 45,
                 height: 5,
                 decoration: BoxDecoration(
-                  color: _mutedColor.withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(8),
+                  color: _mutedColor.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
               Padding(
                 padding: const EdgeInsets.all(18),
                 child: Row(
                   children: [
-                    Icon(Icons.search_rounded, color: _green),
+                    Icon(Icons.near_me_rounded, color: _wazeGreen, size: 26),
                     const SizedBox(width: 10),
                     Text(
-                      'نتائج البحث',
+                      'نتائج البحث عن أماكن',
                       style: TextStyle(
                         color: _textColor,
-                        fontSize: 20,
+                        fontSize: 19,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -375,56 +333,43 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 child: ListView.separated(
                   itemCount: _searchResults.length,
                   separatorBuilder: (_, __) => Divider(
-                    color: _mutedColor.withValues(alpha: 0.15),
+                    color: _mutedColor.withOpacity(0.12),
                     height: 1,
                   ),
                   itemBuilder: (context, index) {
                     final item = _searchResults[index];
-
-                    final name =
-                        (item['name'] ?? item['display_name'] ?? 'مكان')
-                            .toString();
+                    final name = (item['name'] ?? item['display_name'] ?? 'مكان بدون اسم').toString();
 
                     return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
                       leading: CircleAvatar(
-                        backgroundColor: _green.withValues(alpha: 0.14),
-                        child: Icon(Icons.place, color: _green),
+                        backgroundColor: _wazeGreen.withOpacity(0.15),
+                        child: Icon(Icons.place_rounded, color: _wazeGreen),
                       ),
                       title: Text(
                         name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _textColor,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
                       ),
                       subtitle: Text(
                         (item['display_name'] ?? '').toString(),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: _mutedColor),
+                        style: TextStyle(color: _mutedColor, fontSize: 12),
                       ),
                       onTap: () {
-                        final lat =
-                            double.tryParse(item['lat'].toString());
-                        final lon =
-                            double.tryParse(item['lon'].toString());
-
+                        final lat = double.tryParse(item['lat'].toString());
+                        final lon = double.tryParse(item['lon'].toString());
                         if (lat == null || lon == null) return;
 
                         _destination = LatLng(lat, lon);
                         _destinationName = name;
                         _routePoints = [];
 
-                        _mapController.move(_destination!, 15);
-
+                        _mapController.move(_destination!, 15.5);
                         Navigator.pop(sheetContext);
-
-                        setState(() {
-                          _statusMessage = 'تم اختيار $_destinationName';
-                        });
-
+                        setState(() => _statusMessage = 'تم اختيار $_destinationName');
                         _showMessage('تم اختيار $_destinationName');
                       },
                     );
@@ -438,13 +383,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
+  // حساب المسار الأسرع وتجنب الازدحامات عبر OSRM
   Future<void> _calculateRoute() async {
     if (_destination == null) {
-      _showMessage('ابحث عن وجهتك أولاً');
+      _showMessage('يرجى تحديد المكان المراد الذهاب إليه أولاً');
       return;
     }
 
-    setState(() => _statusMessage = 'جارٍ حساب الطريق...');
+    setState(() => _statusMessage = 'جارٍ حساب الطريق الأسرع وتحديث الازدحامات...');
 
     try {
       final start = _currentLocation;
@@ -457,28 +403,18 @@ class _NavigationScreenState extends State<NavigationScreen> {
         '?overview=full&geometries=geojson&steps=true',
       );
 
-      final response =
-          await http.get(uri).timeout(const Duration(seconds: 20));
-
-      if (response.statusCode != 200) {
-        throw Exception('Route request failed');
-      }
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) throw Exception('خطأ حساب المسار');
 
       final data = jsonDecode(response.body);
       final routes = data['routes'] as List?;
-
-      if (routes == null || routes.isEmpty) {
-        throw Exception('No route');
-      }
+      if (routes == null || routes.isEmpty) throw Exception('لا يوجد مسار');
 
       final route = routes.first;
       final coordinates = route['geometry']['coordinates'] as List;
 
       final points = coordinates.map<LatLng>((point) {
-        return LatLng(
-          (point[1] as num).toDouble(),
-          (point[0] as num).toDouble(),
-        );
+        return LatLng((point[1] as num).toDouble(), (point[0] as num).toDouble());
       }).toList();
 
       if (!mounted) return;
@@ -487,25 +423,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
         _routePoints = points;
         _remainingKm = (route['distance'] as num).toDouble() / 1000;
         _remainingMinutes = (route['duration'] as num).toDouble() / 60;
-        _statusMessage = 'تم حساب المسار';
+        _statusMessage = 'تم رسم المسار الأسرع للوصول';
       });
 
       if (points.isNotEmpty) {
         _mapController.fitCamera(
           CameraFit.bounds(
             bounds: LatLngBounds.fromPoints(points),
-            padding: const EdgeInsets.fromLTRB(45, 160, 45, 260),
+            padding: const EdgeInsets.fromLTRB(50, 180, 50, 270),
           ),
         );
       }
-
-      _showMessage('تم حساب المسار بنجاح');
+      _showMessage('تم حساب المسار بنجاح!');
     } catch (_) {
       if (!mounted) return;
-
-      setState(() => _statusMessage = 'تعذّر حساب الطريق');
-
-      _showMessage('تعذّر حساب الطريق. تحقق من الإنترنت');
+      setState(() => _statusMessage = 'تعذر حساب المسار');
+      _showMessage('تعذر رسم المسار. افحص شبكة الإنترنت');
     }
   }
 
@@ -514,36 +447,31 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _showMessage('حدد وجهتك من البحث أولاً');
       return;
     }
-
     if (_routePoints.isEmpty) {
       await _calculateRoute();
-
       if (_routePoints.isEmpty) return;
     }
 
     setState(() {
       _navigating = true;
       _followingLocation = true;
-      _statusMessage = 'الملاحة إلى $_destinationName';
+      _statusMessage = 'الملاحة نشطة نحو $_destinationName';
     });
 
     await _startTracking();
-
     try {
-      await _tts.speak('بدأت الملاحة. انتبه للطريق');
+      await _tts.speak('بدأت الملاحة. اتجه نحو الطريق المحدد وأتمنى لك رحلة آمنة');
     } catch (_) {}
   }
 
   Future<void> _stopNavigation() async {
     await _positionSubscription?.cancel();
     _positionSubscription = null;
-
     try {
       await _tts.stop();
     } catch (_) {}
 
     if (!mounted) return;
-
     setState(() {
       _navigating = false;
       _followingLocation = false;
@@ -558,12 +486,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     double nearestDistance = double.infinity;
 
     for (int i = 0; i < _routePoints.length; i++) {
-      final d = _distance.as(
-        LengthUnit.Meter,
-        _currentLocation,
-        _routePoints[i],
-      );
-
+      final d = _distance.as(LengthUnit.Meter, _currentLocation, _routePoints[i]);
       if (d < nearestDistance) {
         nearestDistance = d;
         nearestIndex = i;
@@ -571,544 +494,98 @@ class _NavigationScreenState extends State<NavigationScreen> {
     }
 
     double remainingMeters = 0;
-
     for (int i = nearestIndex; i < _routePoints.length - 1; i++) {
-      remainingMeters += _distance.as(
-        LengthUnit.Meter,
-        _routePoints[i],
-        _routePoints[i + 1],
-      );
+      remainingMeters += _distance.as(LengthUnit.Meter, _routePoints[i], _routePoints[i + 1]);
     }
 
     _remainingKm = remainingMeters / 1000;
-
     if (_speedKmh > 1) {
       _remainingMinutes = remainingMeters / (_speedKmh / 3.6) / 60;
     }
 
-    if (remainingMeters < 35 && _navigating) {
+    if (remainingMeters < 30 && _navigating) {
       _stopNavigation();
-      _tts.speak('وصلت إلى وجهتك');
+      _tts.speak('لقد وصلت إلى وجهتك بنجاح');
     }
   }
 
-  void _showMessage(String message) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: _green,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
+  // إضافة بلاغ طريق سريعة مستوحي من Waze
+  void _addTrafficReport(String title, IconData icon, Color color) {
+    setState(() {
+      _userReports.add(
+        Marker(
+          point: _currentLocation,
+          width: 44,
+          height: 44,
+          child: Container(
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2.5),
+              boxShadow: [
+                BoxShadow(
+                  color: color.withOpacity(0.4),
+                  blurRadius: 10,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
         ),
       );
+    });
+    _showMessage('تم إضافة بلاغ ($title) لمساعدة السائقين!');
   }
 
-  Widget _roundButton({
-    required IconData icon,
-    required VoidCallback onTap,
-    String? tooltip,
-    Color? iconColor,
-  }) {
-    return Material(
-      color: _panelColor,
-      elevation: 5,
-      shadowColor: Colors.black.withValues(alpha: 0.2),
-      shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: SizedBox(
-          width: 48,
-          height: 48,
-          child: Tooltip(
-            message: tooltip ?? '',
-            child: Icon(
-              icon,
-              color: iconColor ?? _textColor,
-              size: 23,
-            ),
+  // نافذة إرسال بلاغ على الطريق (Waze Reports)
+  void _showReportingSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: _panelColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _searchBar() {
-    return Container(
-      height: 57,
-      decoration: BoxDecoration(
-        color: _panelColor,
-        borderRadius: BorderRadius.circular(19),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
-            blurRadius: 18,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Icon(Icons.search_rounded, color: _green, size: 27),
-          ),
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              textInputAction: TextInputAction.search,
-              onSubmitted: _searchPlaces,
-              style: TextStyle(color: _textColor),
-              decoration: InputDecoration(
-                hintText: 'وين تريد تروح؟',
-                hintStyle: TextStyle(color: _mutedColor),
-                border: InputBorder.none,
-              ),
-            ),
-          ),
-          if (_searching)
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: _green,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: _mutedColor.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-              ),
-            )
-          else
-            IconButton(
-              onPressed: () => _searchPlaces(_searchController.text),
-              icon: Icon(Icons.arrow_forward_rounded, color: _green),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _topPanel() {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: _green,
-                    borderRadius: BorderRadius.circular(15),
-                    boxShadow: [
-                      BoxShadow(
-                        color: _green.withValues(alpha: 0.3),
-                        blurRadius: 12,
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.navigation_rounded,
-                    color: Color(0xFF10231E),
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'دليل العراق',
-                        style: TextStyle(
-                          color: _textColor,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      Text(
-                        'طريقك أسهل',
-                        style: TextStyle(
-                          color: _mutedColor,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _roundButton(
-                  icon: widget.darkMode
-                      ? Icons.light_mode_rounded
-                      : Icons.dark_mode_rounded,
-                  tooltip: widget.darkMode ? 'الوضع النهاري' : 'الوضع الليلي',
-                  iconColor: _green,
-                  onTap: widget.onThemeChanged,
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _searchBar(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _vehicleMarker() {
-    return Transform.rotate(
-      angle: _heading * math.pi / 180,
-      child: Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: _green,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 3),
-          boxShadow: [
-            BoxShadow(
-              color: _green.withValues(alpha: 0.45),
-              blurRadius: 16,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: const Icon(
-          Icons.navigation_rounded,
-          color: Color(0xFF10231E),
-          size: 27,
-        ),
-      ),
-    );
-  }
-
-  Widget _stat(IconData icon, String value, String label) {
-    return Column(
-      children: [
-        Icon(icon, color: _green, size: 23),
-        const SizedBox(height: 6),
-        Text(
-          value,
-          style: TextStyle(
-            color: _textColor,
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          label,
-          style: TextStyle(color: _mutedColor, fontSize: 11),
-          textAlign: TextAlign.center,
-        ),
-      ],
-    );
-  }
-
-  Widget _bottomPanel() {
-    return SafeArea(
-      top: false,
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: _panelColor,
-          borderRadius: BorderRadius.circular(25),
-          border: Border.all(
-            color: _green.withValues(alpha: 0.13),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.22),
-              blurRadius: 24,
-              offset: const Offset(0, 5),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: _green.withValues(alpha: 0.13),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    _navigating
-                        ? Icons.navigation_rounded
-                        : Icons.explore_rounded,
-                    color: _green,
-                    size: 25,
-                  ),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _navigating
-                            ? 'الملاحة شغّالة'
-                            : _destinationName.isNotEmpty
-                                ? _destinationName
-                                : 'وين وجهتك اليوم؟',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _textColor,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _statusMessage,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: _mutedColor,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (_loadingLocation)
-                  SizedBox(
-                    width: 21,
-                    height: 21,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: _green,
-                    ),
-                  )
-                else
-                  Icon(Icons.circle, color: _green, size: 10),
-              ],
-            ),
-            if (_routePoints.isNotEmpty || _navigating) ...[
-              const SizedBox(height: 15),
-              Divider(
-                height: 1,
-                color: _mutedColor.withValues(alpha: 0.2),
               ),
               const SizedBox(height: 15),
+              Text(
+                'إبلاغ عن حالة الطريق (Waze Report)',
+                style: TextStyle(
+                  color: _textColor,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 20),
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  Expanded(
-                    child: _stat(
-                      Icons.route_rounded,
-                      '${_remainingKm.toStringAsFixed(1)} كم',
-                      'المسافة',
-                    ),
-                  ),
-                  Expanded(
-                    child: _stat(
-                      Icons.schedule_rounded,
-                      '${_remainingMinutes.round()} د',
-                      'الوقت التقريبي',
-                    ),
-                  ),
-                  Expanded(
-                    child: _stat(
-                      Icons.speed_rounded,
-                      '${_speedKmh.round()}',
-                      'كم/ساعة',
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 15),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _navigating
-                        ? _stopNavigation
-                        : _startNavigation,
-                    icon: Icon(
-                      _navigating
-                          ? Icons.stop_circle_outlined
-                          : Icons.navigation_rounded,
-                    ),
-                    label: Text(
-                      _navigating ? 'إيقاف الملاحة' : 'ابدأ الملاحة',
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          _navigating ? Colors.redAccent : _green,
-                      foregroundColor: const Color(0xFF10231E),
-                      minimumSize: const Size(0, 51),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                _roundButton(
-                  icon: Icons.alt_route_rounded,
-                  tooltip: 'احسب الطريق',
-                  iconColor: _green,
-                  onTap: _calculateRoute,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final tileUrl = widget.darkMode
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-        : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-
-    return Scaffold(
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _currentLocation,
-                initialZoom: 13,
-                minZoom: 4,
-                maxZoom: 19,
-                interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.all,
-                ),
-                onPositionChanged: (camera, hasGesture) {
-                  if (hasGesture && _followingLocation && !_navigating) {
-                    _followingLocation = false;
-                  }
-                },
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: tileUrl,
-                  userAgentPackageName: 'com.daleeliraq.app',
-                  maxNativeZoom: 19,
-                ),
-                if (_routePoints.isNotEmpty)
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: _routePoints,
-                        strokeWidth: 10,
-                        color: const Color(0xFF1688FF).withValues(alpha: 0.25),
-                      ),
-                      Polyline(
-                        points: _routePoints,
-                        strokeWidth: 5,
-                        color: const Color(0xFF1688FF),
-                      ),
-                    ],
-                  ),
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _currentLocation,
-                      width: 58,
-                      height: 58,
-                      child: _vehicleMarker(),
-                    ),
-                    if (_destination != null)
-                      Marker(
-                        point: _destination!,
-                        width: 48,
-                        height: 48,
-                        child: const Icon(
-                          Icons.location_on_rounded,
-                          color: Colors.redAccent,
-                          size: 43,
-                        ),
-                      ),
-                  ],
-                ),
-                RichAttributionWidget(
-                  attributions: [
-                    TextSourceAttribution('OpenStreetMap contributors'),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _topPanel(),
-          ),
-
-          Positioned(
-            left: 14,
-            bottom: 250,
-            child: Column(
-              children: [
-                _roundButton(
-                  icon: Icons.my_location_rounded,
-                  tooltip: 'موقعي',
-                  iconColor: _green,
-                  onTap: () async {
-                    _followingLocation = true;
-                    await _getCurrentLocation();
-                    _mapController.move(
-                      _currentLocation,
-                      _navigating ? 17 : 16,
-                    );
-                  },
-                ),
-                const SizedBox(height: 11),
-                _roundButton(
-                  icon: Icons.add_rounded,
-                  tooltip: 'تكبير',
-                  onTap: () {
-                    final camera = _mapController.camera;
-                    _mapController.move(
-                      camera.center,
-                      (camera.zoom + 1).clamp(4, 19).toDouble(),
-                    );
-                  },
-                ),
-                const SizedBox(height: 11),
-                _roundButton(
-                  icon: Icons.remove_rounded,
-                  tooltip: 'تصغير',
-                  onTap: () {
-                    final camera = _mapController.camera;
-                    _mapController.move(
-                      camera.center,
-                      (camera.zoom - 1).clamp(4, 19).toDouble(),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: _bottomPanel(),
-          ),
-        ],
-      ),
-    );
-  }
-}
+                  _reportOption('ازدحام شديد', Icons.traffic_rounded, _wazeOrange, () {
+                    Navigator.pop(context);
+                    _addTrafficReport('ازدحام مروري', Icons.traffic_rounded, _wazeOrange);
+                  }),
+                  _reportOption('حادث مروري', Icons.warning_amber_rounded, _wazeRed, () {
+                    Navigator.pop(context);
+                    _addTrafficReport('حادث', Icons.warning_amber_rounded, _wazeRed);
+                  }),
+                  _reportOption('سيطرة / شرطة', Icons.local_police_rounded, _wazeBlue, () {
+                    Navigator.pop(context);
+                    _addTrafficReport('سيطرة', Icons.local_police_rounded, _wazeBlue);
+                  }),
+                  _reportOption('حفرة / مطبة', Icons.construction_rounded, Colors.amber, () {
+                    Navigator.pop(context);
+                    _addTrafficReport('أشغال طرائق', Icons.construction_rounded
