@@ -2,197 +2,181 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 void main() {
-  runApp(const DaleelApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const DaleelIraqApp());
 }
 
-class DaleelApp extends StatelessWidget {
-  const DaleelApp({super.key});
+class DaleelIraqApp extends StatelessWidget {
+  const DaleelIraqApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'دليل العراق',
-      locale: const Locale('ar'),
-      supportedLocales: const [
-        Locale('ar'),
-        Locale('en'),
-      ],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00A86B),
+          seedColor: Colors.green,
         ),
       ),
-      home: const MapHome(),
+      home: const NavigationScreen(),
     );
   }
 }
 
-class MapHome extends StatefulWidget {
-  const MapHome({super.key});
+class NavigationScreen extends StatefulWidget {
+  const NavigationScreen({super.key});
 
   @override
-  State<MapHome> createState() => _MapHomeState();
+  State<NavigationScreen> createState() =>
+      _NavigationScreenState();
 }
 
-class _MapHomeState extends State<MapHome> {
+class _NavigationScreenState extends State<NavigationScreen> {
   final MapController _mapController = MapController();
   final TextEditingController _searchController =
       TextEditingController();
-  final FocusNode _searchFocus = FocusNode();
   final FlutterTts _tts = FlutterTts();
 
-  static const LatLng _baghdad =
-      LatLng(33.3152, 44.3661);
+  StreamSubscription<Position>? _positionSubscription;
 
-  static const String _userAgent =
-      'DaleelIraq/1.0';
-
-  LatLng _center = _baghdad;
-  LatLng? _myLocation;
+  LatLng _myLocation = const LatLng(33.3152, 44.3661);
   LatLng? _destination;
 
-  List<LatLng> _routePoints = [];
-  List<Map<String, dynamic>> _results = [];
-
-  bool _mapReady = false;
-  bool _locating = false;
-  bool _searching = false;
-  bool _routing = false;
-  bool _navigating = false;
-
-  String _status = 'أهلاً بك في دليل العراق 🇮🇶';
   String _destinationName = '';
+  String _status = 'جارٍ تحديد موقعك...';
+  String _instruction = 'ابحث عن وجهتك للبدء';
 
-  double? _distanceKm;
-  double? _durationMin;
+  bool _hasLocation = false;
+  bool _isSearching = false;
+  bool _isCalculatingRoute = false;
+  bool _isNavigating = false;
+
+  List<LatLng> _routePoints = [];
+  List<Map<String, dynamic>> _routeSteps = [];
+
+  int _currentStepIndex = 0;
+
+  double _remainingDistance = 0;
+  double _remainingDuration = 0;
+
+  DateTime _lastSpokenAt = DateTime(2000);
 
   @override
   void initState() {
     super.initState();
-    _setupVoice();
+    _initializeTts();
+    _initializeLocation();
   }
 
-  Future<void> _setupVoice() async {
+  Future<void> _initializeTts() async {
     try {
       await _tts.setLanguage('ar');
       await _tts.setSpeechRate(0.45);
       await _tts.setVolume(1.0);
-    } catch (_) {
-      // يعتمد توفر الصوت العربي على أصوات الهاتف المثبتة.
-    }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _positionSubscription?.cancel();
+    _searchController.dispose();
+    _tts.stop();
+    super.dispose();
   }
 
   void _setStatus(String message) {
     if (!mounted) return;
-    setState(() => _status = message);
-  }
-
-  bool _isInsideIraq(double lat, double lon) {
-    return lat >= 29.0 &&
-        lat <= 38.7 &&
-        lon >= 38.5 &&
-        lon <= 48.8;
-  }
-
-  Future<void> _goToMyLocation() async {
-    if (_locating) return;
 
     setState(() {
-      _locating = true;
-      _status = 'جارٍ تحديد موقعك...';
+      _status = message;
     });
+  }
 
+  Future<void> _initializeLocation() async {
     try {
-      final enabled =
+      bool serviceEnabled =
           await Geolocator.isLocationServiceEnabled();
 
-      if (!enabled) {
-        _setStatus('فعّل GPS من إعدادات الهاتف');
+      if (!serviceEnabled) {
+        _setStatus('شغّل GPS من إعدادات الهاتف');
         return;
       }
 
-      var permission = await Geolocator.checkPermission();
+      LocationPermission permission =
+          await Geolocator.checkPermission();
 
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
 
       if (permission == LocationPermission.denied) {
-        _setStatus('اسمح للتطبيق باستخدام موقعك');
+        _setStatus('يرجى السماح للتطبيق باستخدام الموقع');
         return;
       }
 
       if (permission == LocationPermission.deniedForever) {
-        _setStatus('افتح إعدادات التطبيق وفعّل الموقع');
-        await Geolocator.openAppSettings();
+        _setStatus(
+          'افتح إعدادات التطبيق واسمح بالوصول إلى الموقع',
+        );
         return;
       }
 
-      final position = await Geolocator.getCurrentPosition(
+      Position position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 30),
         ),
-      );
-
-      final point = LatLng(
-        position.latitude,
-        position.longitude,
       );
 
       if (!mounted) return;
 
       setState(() {
-        _myLocation = point;
-        _center = point;
-        _status = 'تم تحديد موقعك بنجاح';
+        _myLocation = LatLng(
+          position.latitude,
+          position.longitude,
+        );
+
+        _hasLocation = true;
+        _status = 'تم تحديد موقعك';
       });
 
-      if (_mapReady) {
-        _mapController.move(point, 16);
-      }
-    } on TimeoutException {
-      _setStatus('تأخر GPS. جرّب في مكان مفتوح');
-    } catch (_) {
-      _setStatus('تعذر تحديد الموقع. تحقق من الأذونات والإنترنت');
-    } finally {
-      if (mounted) {
-        setState(() => _locating = false);
-      }
+      _mapController.move(_myLocation, 16);
+    } catch (e) {
+      _setStatus('تعذر تحديد الموقع. تحقق من GPS والإنترنت');
     }
   }
 
-  Future<void> _searchPlaces([String? query]) async {
-    final text = (query ?? _searchController.text).trim();
+  Future<void> _goToMyLocation() async {
+    if (!_hasLocation) {
+      await _initializeLocation();
+    }
 
-    if (text.isEmpty) {
-      _setStatus('اكتب اسم مدينة أو مكان للبحث');
+    if (!_hasLocation || !mounted) return;
+
+    _mapController.move(_myLocation, 17);
+    _setStatus('هذا موقعك الحالي');
+  }
+
+  // البحث عن الأماكن والعناوين باستخدام OpenStreetMap
+  Future<void> _searchPlaces() async {
+    final query = _searchController.text.trim();
+
+    if (query.isEmpty) {
+      _setStatus('اكتب اسم المكان الذي تريد البحث عنه');
       return;
     }
 
-    FocusScope.of(context).unfocus();
-
     setState(() {
-      _searching = true;
-      _results = [];
-      _status = 'جارٍ البحث عن $text...';
+      _isSearching = true;
+      _status = 'جارٍ البحث عن $query...';
     });
 
     try {
@@ -200,9 +184,9 @@ class _MapHomeState extends State<MapHome> {
         'nominatim.openstreetmap.org',
         '/search',
         {
-          'q': '$text, Iraq',
+          'q': '$query, Iraq',
           'format': 'jsonv2',
-          'limit': '10',
+          'limit': '8',
           'addressdetails': '1',
           'accept-language': 'ar',
           'countrycodes': 'iq',
@@ -212,571 +196,906 @@ class _MapHomeState extends State<MapHome> {
       final response = await http.get(
         uri,
         headers: {
-          'User-Agent': _userAgent,
-          'Accept': 'application/json',
+          'User-Agent': 'DaleelIraqNavigation/1.0',
+          'Accept-Language': 'ar',
         },
       ).timeout(const Duration(seconds: 20));
 
       if (response.statusCode != 200) {
-        _setStatus('خدمة البحث غير متاحة حالياً');
-        return;
+        throw Exception('فشل البحث');
       }
 
-      final data = jsonDecode(response.body) as List<dynamic>;
-      final found = <Map<String, dynamic>>[];
-
-      for (final item in data) {
-        final place = Map<String, dynamic>.from(item);
-
-        final lat = double.tryParse(
-          place['lat']?.toString() ?? '',
-        );
-        final lon = double.tryParse(
-          place['lon']?.toString() ?? '',
-        );
-
-        if (lat == null || lon == null) continue;
-        if (!_isInsideIraq(lat, lon)) continue;
-
-        found.add(place);
-      }
+      final List<dynamic> results =
+          jsonDecode(response.body) as List<dynamic>;
 
       if (!mounted) return;
 
       setState(() {
-        _results = found;
-        _status = found.isEmpty
-            ? 'ما لكيت نتائج. جرّب اسماً آخر'
-            : 'تم العثور على ${found.length} نتيجة';
+        _isSearching = false;
       });
 
-      if (found.isNotEmpty) {
-        _selectPlace(found.first);
+      if (results.isEmpty) {
+        _setStatus('ما لكيت المكان. جرّب اسم أو عنوان آخر');
+        return;
       }
-    } on TimeoutException {
-      _setStatus('انتهت مهلة البحث. تحقق من الإنترنت');
+
+      _showSearchResults(results);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isSearching = false;
+        _status = 'فشل البحث. تحقق من اتصال الإنترنت';
+      });
+    }
+  }
+
+  void _showSearchResults(List<dynamic> results) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.65,
+            child: Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'نتائج البحث',
+                    style: TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: results.length,
+                    itemBuilder: (context, index) {
+                      final item =
+                          results[index] as Map<String, dynamic>;
+
+                      final name =
+                          item['display_name']?.toString() ??
+                              'مكان بدون اسم';
+
+                      return ListTile(
+                        leading: const Icon(
+                          Icons.location_on,
+                          color: Colors.green,
+                        ),
+                        title: Text(
+                          name,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _selectDestination(item);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _selectDestination(
+    Map<String, dynamic> item,
+  ) async {
+    try {
+      final latitude =
+          double.parse(item['lat'].toString());
+
+      final longitude =
+          double.parse(item['lon'].toString());
+
+      final name =
+          item['display_name']?.toString() ?? 'الوجهة';
+
+      setState(() {
+        _destination = LatLng(latitude, longitude);
+        _destinationName = name;
+        _routePoints = [];
+        _routeSteps = [];
+        _instruction = 'اضغط حساب الطريق';
+        _status = 'تم اختيار الوجهة';
+      });
+
+      _mapController.move(
+        LatLng(latitude, longitude),
+        15,
+      );
+
+      await _calculateRoute();
     } catch (_) {
-      _setStatus('تعذر الاتصال بخدمة البحث');
-    } finally {
-      if (mounted) {
-        setState(() => _searching = false);
-      }
+      _setStatus('تعذر تحديد إحداثيات المكان');
     }
   }
 
-  void _selectPlace(
-    Map<String, dynamic> place, {
-    bool moveMap = true,
-  }) {
-    final lat = double.tryParse(
-      place['lat']?.toString() ?? '',
-    );
-    final lon = double.tryParse(
-      place['lon']?.toString() ?? '',
-    );
-
-    if (lat == null || lon == null) return;
-
-    final point = LatLng(lat, lon);
-    final name = place['display_name']?.toString() ?? 'الوجهة';
-
-    setState(() {
-      _destination = point;
-      _destinationName = name;
-      _routePoints = [];
-      _distanceKm = null;
-      _durationMin = null;
-      _results = [];
-      _status = 'تم اختيار الوجهة';
-    });
-
-    if (moveMap && _mapReady) {
-      _mapController.move(point, 15);
-    }
-
-    _searchController.text =
-        name.split(',').take(2).join(',').trim();
-  }
-
-  Future<void> _buildRoute() async {
+  // حساب الطريق من موقع المستخدم إلى الوجهة
+  Future<void> _calculateRoute() async {
     if (_destination == null) {
-      _setStatus('ابحث عن وجهتك أولاً');
+      _setStatus('اختار وجهتك أولاً');
       return;
     }
 
-    if (_myLocation == null) {
-      await _goToMyLocation();
+    if (!_hasLocation) {
+      await _initializeLocation();
     }
 
-    if (_myLocation == null) {
-      _setStatus('حدد موقعك أولاً حتى نرسم المسار');
+    if (!_hasLocation || _destination == null) {
+      _setStatus('تعذر تحديد موقعك الحالي');
       return;
     }
 
     setState(() {
-      _routing = true;
-      _status = 'جارٍ حساب المسار...';
+      _isCalculatingRoute = true;
+      _status = 'جارٍ حساب الطريق...';
     });
 
     try {
-      final start = _myLocation!;
-      final end = _destination!;
-
-      final uri = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/'
-        '${start.longitude},${start.latitude};'
-        '${end.longitude},${end.latitude}'
-        '?overview=full&geometries=geojson',
+      final uri = Uri.https(
+        'router.project-osrm.org',
+        '/route/v1/driving/'
+            '${_myLocation.longitude},${_myLocation.latitude};'
+            '${_destination!.longitude},${_destination!.latitude}',
+        {
+          'overview': 'full',
+          'geometries': 'geojson',
+          'steps': 'true',
+          'language': 'en',
+        },
       );
 
-      final response = await http.get(
-        uri,
-        headers: {'User-Agent': _userAgent},
-      ).timeout(const Duration(seconds: 30));
+      final response = await http.get(uri).timeout(
+        const Duration(seconds: 30),
+      );
 
       if (response.statusCode != 200) {
-        _setStatus('تعذر حساب المسار حالياً');
-        return;
+        throw Exception('تعذر حساب الطريق');
       }
 
-      final data = jsonDecode(response.body)
-          as Map<String, dynamic>;
+      final data =
+          jsonDecode(response.body) as Map<String, dynamic>;
 
-      final routes = data['routes'] as List<dynamic>?;
+      if (data['code'] != 'Ok') {
+        throw Exception('لم يتم العثور على طريق');
+      }
 
-      if (routes == null || routes.isEmpty) {
-        _setStatus('لم نعثر على مسار بالسيارة لهذه الوجهة');
-        return;
+      final routes = data['routes'] as List<dynamic>;
+
+      if (routes.isEmpty) {
+        throw Exception('لا يوجد طريق متاح');
       }
 
       final route = routes.first as Map<String, dynamic>;
+
       final geometry =
           route['geometry'] as Map<String, dynamic>;
+
       final coordinates =
           geometry['coordinates'] as List<dynamic>;
 
       final points = coordinates.map((coordinate) {
         final pair = coordinate as List<dynamic>;
+
         return LatLng(
           (pair[1] as num).toDouble(),
           (pair[0] as num).toDouble(),
         );
       }).toList();
 
+      final legs = route['legs'] as List<dynamic>;
+
+      final leg = legs.first as Map<String, dynamic>;
+
+      final steps = (leg['steps'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+
       if (!mounted) return;
 
       setState(() {
         _routePoints = points;
-        _distanceKm =
-            (route['distance'] as num).toDouble() / 1000;
-        _durationMin =
-            (route['duration'] as num).toDouble() / 60;
-        _status = 'تم حساب المسار بنجاح';
+        _routeSteps = steps;
+        _currentStepIndex = 0;
+
+        _remainingDistance =
+            (route['distance'] as num).toDouble();
+
+        _remainingDuration =
+            (route['duration'] as num).toDouble();
+
+        _isCalculatingRoute = false;
+        _status = 'تم حساب الطريق بنجاح';
+        _instruction = 'الطريق جاهز. اضغط بدء الملاحة';
       });
 
-      if (_mapReady && points.isNotEmpty) {
-        final bounds = LatLngBounds.fromPoints(points);
-        _mapController.fitCamera(
-          CameraFit.bounds(
-            bounds: bounds,
-            padding: const EdgeInsets.all(65),
-          ),
-        );
-      }
-    } on TimeoutException {
-      _setStatus('تأخر حساب المسار. حاول مرة أخرى');
-    } catch (_) {
-      _setStatus('تعذر حساب المسار. تحقق من الإنترنت');
-    } finally {
-      if (mounted) {
-        setState(() => _routing = false);
-      }
+      _fitRouteOnMap();
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isCalculatingRoute = false;
+        _status =
+            'تعذر حساب الطريق. تحقق من الإنترنت وحاول مرة أخرى';
+      });
     }
   }
 
+  void _fitRouteOnMap() {
+    if (_routePoints.isEmpty) return;
+
+    double minLat = _routePoints.first.latitude;
+    double maxLat = minLat;
+    double minLng = _routePoints.first.longitude;
+    double maxLng = minLng;
+
+    for (final point in _routePoints) {
+      if (point.latitude < minLat) minLat = point.latitude;
+      if (point.latitude > maxLat) maxLat = point.latitude;
+      if (point.longitude < minLng) minLng = point.longitude;
+      if (point.longitude > maxLng) maxLng = point.longitude;
+    }
+
+    final center = LatLng(
+      (minLat + maxLat) / 2,
+      (minLng + maxLng) / 2,
+    );
+
+    final latDiff = maxLat - minLat;
+    final lngDiff = maxLng - minLng;
+    final largestDiff =
+        latDiff > lngDiff ? latDiff : lngDiff;
+
+    double zoom = 15;
+
+    if (largestDiff > 2) {
+      zoom = 6;
+    } else if (largestDiff > 1) {
+      zoom = 7;
+    } else if (largestDiff > 0.5) {
+      zoom = 8;
+    } else if (largestDiff > 0.2) {
+      zoom = 10;
+    } else if (largestDiff > 0.08) {
+      zoom = 11;
+    } else if (largestDiff > 0.03) {
+      zoom = 12;
+    } else if (largestDiff > 0.01) {
+      zoom = 13;
+    }
+
+    _mapController.move(center, zoom);
+  }
+
+  // بدء الملاحة داخل التطبيق
   Future<void> _startNavigation() async {
     if (_destination == null) {
       _setStatus('اختار وجهتك من البحث أولاً');
       return;
     }
 
-    if (_myLocation == null) {
-      await _goToMyLocation();
+    if (_routePoints.isEmpty) {
+      await _calculateRoute();
     }
 
-    if (_myLocation == null || _destination == null) {
+    if (_routePoints.isEmpty || !mounted) {
+      _setStatus('تعذر تجهيز الطريق');
       return;
     }
 
-    final destination = _destination!;
+    if (!_hasLocation) {
+      await _initializeLocation();
+    }
 
-    final uri = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1'
-      '&origin=${_myLocation!.latitude},${_myLocation!.longitude}'
-      '&destination=${destination.latitude},${destination.longitude}'
-      '&travelmode=driving',
+    if (!_hasLocation || !mounted) {
+      _setStatus('تعذر تحديد موقعك');
+      return;
+    }
+
+    setState(() {
+      _isNavigating = true;
+      _status = 'الملاحة بدأت';
+    });
+
+    _speakInstruction(
+      'بدأت الملاحة إلى $_destinationName',
     );
 
-    try {
-      await _tts.speak(
-        'تم اختيار الوجهة. جارٍ فتح الملاحة إلى $_destinationName',
+    await _positionSubscription?.cancel();
+
+    const settings = LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 5,
+    );
+
+    _positionSubscription =
+        Geolocator.getPositionStream(
+      locationSettings: settings,
+    ).listen(
+      (Position position) {
+        if (!mounted) return;
+
+        setState(() {
+          _myLocation = LatLng(
+            position.latitude,
+            position.longitude,
+          );
+        });
+
+        // تحريك الخريطة لمتابعة المستخدم أثناء الملاحة
+        if (_isNavigating) {
+          _mapController.move(_myLocation, 17);
+          _updateNavigationProgress();
+        }
+      },
+      onError: (error) {
+        _setStatus('تعذر تحديث GPS أثناء الملاحة');
+      },
+    );
+
+    await _updateNavigationProgress();
+  }
+
+  Future<void> _updateNavigationProgress() async {
+    if (!_isNavigating || _routeSteps.isEmpty) return;
+
+    if (_destination == null) return;
+
+    final distanceCalculator = const Distance();
+
+    final distanceToDestination = distanceCalculator(
+      _myLocation,
+      _destination!,
+    );
+
+    if (distanceToDestination < 25) {
+      setState(() {
+        _instruction = 'وصلت إلى وجهتك';
+        _status = 'تم الوصول';
+        _isNavigating = false;
+      });
+
+      await _positionSubscription?.cancel();
+
+      _speakInstruction('لقد وصلت إلى وجهتك');
+      return;
+    }
+
+    // البحث عن أقرب نقطة على المسار
+    int closestPointIndex = 0;
+    double closestDistance = double.infinity;
+
+    for (int i = 0; i < _routePoints.length; i++) {
+      final distance = distanceCalculator(
+        _myLocation,
+        _routePoints[i],
       );
-    } catch (_) {}
 
-    final opened = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestPointIndex = i;
+      }
+    }
 
-    if (!opened) {
-      _setStatus('تعذر فتح تطبيق الخرائط على هاتفك');
+    // تحديث المسافة والوقت التقريبيين المتبقيين
+    double remainingMeters = 0;
+
+    for (
+      int i = closestPointIndex;
+      i < _routePoints.length - 1;
+      i++
+    ) {
+      remainingMeters += distanceCalculator(
+        _routePoints[i],
+        _routePoints[i + 1],
+      );
+    }
+
+    setState(() {
+      _remainingDistance = remainingMeters;
+      _remainingDuration = remainingMeters / 8.3;
+    });
+
+    // تحديد أقرب خطوة إرشادية
+    int bestStep = _currentStepIndex;
+    double bestStepDistance = double.infinity;
+
+    for (
+      int i = _currentStepIndex;
+      i < _routeSteps.length;
+      i++
+    ) {
+      final step = _routeSteps[i];
+      final maneuver =
+          step['maneuver'] as Map<String, dynamic>?;
+
+      if (maneuver == null) continue;
+
+      final location =
+          maneuver['location'] as List<dynamic>?;
+
+      if (location == null || location.length < 2) continue;
+
+      final stepLocation = LatLng(
+        (location[1] as num).toDouble(),
+        (location[0] as num).toDouble(),
+      );
+
+      final distance = distanceCalculator(
+        _myLocation,
+        stepLocation,
+      );
+
+      if (distance < bestStepDistance) {
+        bestStepDistance = distance;
+        bestStep = i;
+      }
+    }
+
+    if (bestStepDistance < 40 &&
+        bestStep < _routeSteps.length - 1) {
+      bestStep++;
+    }
+
+    if (bestStep >= _routeSteps.length) {
+      bestStep = _routeSteps.length - 1;
+    }
+
+    if (bestStep >= 0 && bestStep < _routeSteps.length) {
+      final step = _routeSteps[bestStep];
+
+      final maneuver =
+          step['maneuver'] as Map<String, dynamic>? ?? {};
+
+      final type = maneuver['type']?.toString() ?? '';
+      final modifier =
+          maneuver['modifier']?.toString() ?? '';
+
+      final roadName = step['name']?.toString() ?? '';
+
+      final instruction = _arabicInstruction(
+        type,
+        modifier,
+        roadName,
+      );
+
+      if (bestStep != _currentStepIndex ||
+          _instruction != instruction) {
+        setState(() {
+          _currentStepIndex = bestStep;
+          _instruction = instruction;
+        });
+
+        _speakInstruction(instruction);
+      }
+    }
+
+    if (closestDistance > 80) {
+      final now = DateTime.now();
+
+      if (now.difference(_lastSpokenAt).inSeconds > 30) {
+        _lastSpokenAt = now;
+        _speakInstruction(
+          'انتبه إلى الطريق واتبع المسار الظاهر على الخريطة',
+        );
+      }
     }
   }
 
-  Future<void> _speakStatus() async {
+  String _arabicInstruction(
+    String type,
+    String modifier,
+    String roadName,
+  ) {
+    String action;
+
+    if (type == 'arrive') {
+      action = 'اقتربت من وجهتك';
+    } else if (type == 'depart') {
+      action = 'واصل السير';
+    } else if (type == 'roundabout' ||
+        type == 'rotary') {
+      action = 'ادخل إلى الدوار';
+    } else if (modifier.contains('left')) {
+      action = 'استعد للانعطاف يساراً';
+    } else if (modifier.contains('right')) {
+      action = 'استعد للانعطاف يميناً';
+    } else if (modifier == 'uturn') {
+      action = 'استدر إلى الاتجاه المعاكس';
+    } else if (type == 'turn') {
+      action = 'واصل السير حسب اتجاه الطريق';
+    } else {
+      action = 'واصل السير';
+    }
+
+    if (roadName.isNotEmpty) {
+      return '$action باتجاه $roadName';
+    }
+
+    return action;
+  }
+
+  Future<void> _speakInstruction(String text) async {
     try {
-      await _tts.speak(_status);
-    } catch (_) {
-      _setStatus('تحقق من تثبيت صوت عربي على هاتفك');
+      await _tts.stop();
+      await _tts.speak(text);
+    } catch (_) {}
+  }
+
+  Future<void> _stopNavigation() async {
+    await _positionSubscription?.cancel();
+    _positionSubscription = null;
+
+    await _tts.stop();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isNavigating = false;
+      _status = 'تم إيقاف الملاحة';
+      _instruction = 'ابحث عن وجهتك للبدء';
+    });
+  }
+
+  String _formatDistance(double meters) {
+    if (meters >= 1000) {
+      return '${(meters / 1000).toStringAsFixed(1)} كم';
     }
+
+    return '${meters.round()} متر';
   }
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    _searchFocus.dispose();
-    _tts.stop();
-    super.dispose();
-  }
+  String _formatDuration(double seconds) {
+    final minutes = (seconds / 60).ceil();
 
-  Widget _roundButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-    String? tooltip,
-  }) {
-    return Material(
-      color: Colors.white,
-      elevation: 4,
-      shape: const CircleBorder(),
-      child: IconButton(
-        tooltip: tooltip,
-        onPressed: onPressed,
-        icon: Icon(icon, color: const Color(0xFF087F5B)),
-      ),
-    );
+    if (minutes >= 60) {
+      final hours = minutes ~/ 60;
+      final remainingMinutes = minutes % 60;
+
+      return '$hours ساعة و$remainingMinutes دقيقة';
+    }
+
+    return '$minutes دقيقة';
   }
 
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        body: Stack(
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.green.shade700,
+        foregroundColor: Colors.white,
+        title: const Row(
           children: [
-            Positioned.fill(
-              child: FlutterMap(
-                mapController: _mapController,
-                options: MapOptions(
-                  initialCenter: _center,
-                  initialZoom: 6,
-                  onMapReady: () {
-                    _mapReady = true;
-                  },
-                  onTap: (_, point) {
-                    setState(() {
-                      _center = point;
-                    });
-                  },
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.daleel.iraq',
-                  ),
-                  if (_routePoints.isNotEmpty)
-                    PolylineLayer(
-                      polylines: [
-                        Polyline(
-                          points: _routePoints,
-                          strokeWidth: 6,
-                          color: const Color(0xFF087F5B),
-                        ),
-                      ],
-                    ),
-                  MarkerLayer(
-                    markers: [
-                      if (_myLocation != null)
-                        Marker(
-                          point: _myLocation!,
-                          width: 52,
-                          height: 52,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.blue.withValues(alpha: 0.15),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.my_location,
-                              color: Colors.blue,
-                              size: 32,
-                            ),
-                          ),
-                        ),
-                      if (_destination != null)
-                        Marker(
-                          point: _destination!,
-                          width: 48,
-                          height: 48,
-                          child: const Icon(
-                            Icons.location_on,
-                            color: Colors.red,
-                            size: 44,
-                          ),
-                        ),
-                    ],
-                  ),
-                  RichAttributionWidget(
-                    attributions: [
-                      TextSourceAttribution(
-                        'OpenStreetMap contributors',
-                        onTap: () async {
-                          await launchUrl(
-                            Uri.parse(
-                              'https://www.openstreetmap.org/copyright',
-                            ),
-                            mode: LaunchMode.externalApplication,
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            // مربع البحث
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 12,
-              left: 14,
-              right: 14,
-              child: Column(
-                children: [
-                  Material(
-                    elevation: 5,
-                    borderRadius: BorderRadius.circular(18),
-                    color: Colors.white,
-                    child: TextField(
-                      controller: _searchController,
-                      focusNode: _searchFocus,
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: _searchPlaces,
-                      decoration: InputDecoration(
-                        hintText: 'ابحث عن مكان في العراق...',
-                        prefixIcon: const Icon(
-                          Icons.search,
-                          color: Color(0xFF087F5B),
-                        ),
-                        suffixIcon: _searching
-                            ? const Padding(
-                                padding: EdgeInsets.all(14),
-                                child: SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                              )
-                            : IconButton(
-                                onPressed: _searchPlaces,
-                                icon: const Icon(Icons.arrow_forward),
-                              ),
-                        border: InputBorder.none,
-                        contentPadding:
-                            const EdgeInsets.symmetric(vertical: 17),
-                      ),
-                    ),
-                  ),
-
-                  if (_results.isNotEmpty)
-                    Container(
-                      margin: const EdgeInsets.only(top: 6),
-                      constraints:
-                          const BoxConstraints(maxHeight: 260),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: const [
-                          BoxShadow(
-                            blurRadius: 8,
-                            color: Colors.black26,
-                          ),
-                        ],
-                      ),
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: _results.length,
-                        separatorBuilder: (_, __) =>
-                            const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final place = _results[index];
-                          final name =
-                              place['display_name']?.toString() ??
-                                  'مكان بدون اسم';
-
-                          return ListTile(
-                            dense: true,
-                            leading: const Icon(
-                              Icons.place,
-                              color: Color(0xFF087F5B),
-                            ),
-                            title: Text(
-                              name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onTap: () => _selectPlace(place),
-                          );
-                        },
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-            // أزرار الخريطة
-            Positioned(
-              left: 14,
-              bottom: 190,
-              child: Column(
-                children: [
-                  _roundButton(
-                    icon: Icons.my_location,
-                    tooltip: 'موقعي',
-                    onPressed: _goToMyLocation,
-                  ),
-                  const SizedBox(height: 12),
-                  _roundButton(
-                    icon: Icons.volume_up,
-                    tooltip: 'قراءة الحالة صوتياً',
-                    onPressed: _speakStatus,
-                  ),
-                ],
-              ),
-            ),
-
-            // لوحة الوجهة والملاحة
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12,
-              child: SafeArea(
-                top: false,
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(22),
-                    boxShadow: const [
-                      BoxShadow(
-                        blurRadius: 12,
-                        color: Colors.black26,
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.navigation,
-                            color: Color(0xFF087F5B),
-                            size: 28,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              _destination == null
-                                  ? 'دليل العراق 🇮🇶'
-                                  : _destinationName,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _status,
-                        style: const TextStyle(
-                          color: Colors.black54,
-                          fontSize: 13,
-                        ),
-                      ),
-                      if (_distanceKm != null &&
-                          _durationMin != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          'المسافة: ${_distanceKm!.toStringAsFixed(1)} كم'
-                          '  •  الوقت التقريبي: '
-                          '${_durationMin!.round()} دقيقة',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: _routing
-                                  ? null
-                                  : _buildRoute,
-                              icon: _routing
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.alt_route),
-                              label: const Text('احسب المسار'),
-                              style: FilledButton.styleFrom(
-                                backgroundColor:
-                                    const Color(0xFF087F5B),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: _startNavigation,
-                              icon: const Icon(Icons.navigation),
-                              label: const Text('ابدأ الملاحة'),
-                              style: FilledButton.styleFrom(
-                                backgroundColor:
-                                    const Color(0xFFEF6C00),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+            Icon(Icons.navigation),
+            SizedBox(width: 10),
+            Text(
+              'دليل العراق',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
               ),
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'موقعي',
+            onPressed: _goToMyLocation,
+            icon: const Icon(Icons.my_location),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // شريط البحث
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _searchPlaces(),
+                    decoration: InputDecoration(
+                      hintText: 'ابحث عن مكان في العراق',
+                      prefixIcon: const Icon(Icons.search),
+                      filled: true,
+                      fillColor: Colors.grey.shade100,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(15),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  tooltip: 'بحث',
+                  onPressed:
+                      _isSearching ? null : _searchPlaces,
+                  icon: _isSearching
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.search),
+                ),
+              ],
+            ),
+          ),
+
+          // الخريطة
+          Expanded(
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _myLocation,
+                initialZoom: 6,
+                onTap: (tapPosition, point) {
+                  if (_isNavigating) return;
+
+                  setState(() {
+                    _destination = point;
+                    _destinationName =
+                        'الوجهة المحددة على الخريطة';
+                    _routePoints = [];
+                    _routeSteps = [];
+                    _instruction = 'اضغط حساب الطريق';
+                    _status = 'تم اختيار الوجهة';
+                  });
+                },
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate:
+                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.daleel.iraq',
+                ),
+
+                if (_routePoints.isNotEmpty)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: _routePoints,
+                        strokeWidth: 7,
+                        color: Colors.blue,
+                      ),
+                    ],
+                  ),
+
+                MarkerLayer(
+                  markers: [
+                    if (_hasLocation)
+                      Marker(
+                        point: _myLocation,
+                        width: 50,
+                        height: 50,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.blue,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white,
+                              width: 4,
+                            ),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Colors.black26,
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.navigation,
+                            color: Colors.white,
+                            size: 25,
+                          ),
+                        ),
+                      ),
+
+                    if (_destination != null)
+                      Marker(
+                        point: _destination!,
+                        width: 45,
+                        height: 45,
+                        child: const Icon(
+                          Icons.location_pin,
+                          color: Colors.red,
+                          size: 45,
+                        ),
+                      ),
+                  ],
+                ),
+
+                RichAttributionWidget(
+                  attributions: [
+                    TextSourceAttribution(
+                      'OpenStreetMap contributors',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // لوحة المعلومات والملاحة
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 10,
+                  offset: const Offset(0, -3),
+                ),
+              ],
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _isNavigating
+                            ? Icons.navigation
+                            : Icons.info_outline,
+                        color: Colors.green.shade700,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _status,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  if (_isNavigating) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _instruction,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.route,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _formatDistance(
+                                  _remainingDistance,
+                                ),
+                              ),
+                              const SizedBox(width: 18),
+                              const Icon(
+                                Icons.access_time,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _formatDuration(
+                                  _remainingDuration,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 12),
+
+                  if (!_isNavigating)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _hasLocation
+                                ? _goToMyLocation
+                                : _initializeLocation,
+                            icon: const Icon(
+                              Icons.my_location,
+                            ),
+                            label: const Text('موقعي'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _destination == null ||
+                                    _isCalculatingRoute
+                                ? null
+                                : _calculateRoute,
+                            icon: _isCalculatingRoute
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child:
+                                        CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.route),
+                            label: const Text('حساب الطريق'),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                  const SizedBox(height: 8),
+
+                  SizedBox(
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isNavigating
+                            ? Colors.red.shade700
+                            : Colors.green.shade700,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: _isNavigating
+                          ? _stopNavigation
+                          : _startNavigation,
+                      icon: Icon(
+                        _isNavigating
+                            ? Icons.stop
+                            : Icons.navigation,
+                      ),
+                      label: Text(
+                        _isNavigating
+                            ? 'إيقاف الملاحة'
+                            : 'بدء الملاحة',
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
