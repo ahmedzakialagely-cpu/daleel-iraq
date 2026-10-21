@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_tts/flutter_tts.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const DaleelIraqApp());
 }
 
@@ -21,7 +22,7 @@ class DaleelIraqApp extends StatefulWidget {
 }
 
 class _DaleelIraqAppState extends State<DaleelIraqApp> {
-  bool darkMode = false;
+  bool darkMode = true;
 
   @override
   Widget build(BuildContext context) {
@@ -34,11 +35,11 @@ class _DaleelIraqAppState extends State<DaleelIraqApp> {
         useMaterial3: true,
         brightness: brightness,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF22B14C),
+          seedColor: const Color(0xFF22D39A),
           brightness: brightness,
         ),
         scaffoldBackgroundColor:
-            darkMode ? const Color(0xFF1B1E23) : const Color(0xFFF0F3F4),
+            darkMode ? const Color(0xFF101820) : const Color(0xFFF1F4F5),
       ),
       home: Directionality(
         textDirection: TextDirection.rtl,
@@ -74,7 +75,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   final Distance _distance = const Distance();
 
-  LatLng _currentLocation = const LatLng(33.3152, 44.3661);
+  LatLng _currentLocation = const LatLng(33.3152, 44.3661); // بغداد افتراضياً
   LatLng? _destination;
 
   List<LatLng> _routePoints = [];
@@ -85,7 +86,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool _loadingLocation = false;
   bool _searching = false;
   bool _navigating = false;
-  bool _followingLocation = false;
+  bool _followingLocation = true;
 
   double _heading = 0;
   double _speedKmh = 0;
@@ -95,17 +96,16 @@ class _NavigationScreenState extends State<NavigationScreen> {
   String _statusMessage = 'أهلاً بك في دليل العراق';
   String _destinationName = '';
 
-  Color get _wazeGreen => const Color(0xFF22B14C);
-  Color get _wazeBlue => const Color(0xFF0099FF);
+  Color get _green => const Color(0xFF22D39A);
 
   Color get _panelColor =>
-      widget.darkMode ? const Color(0xFF262A34) : Colors.white;
+      widget.darkMode ? const Color(0xFF202B35) : Colors.white;
 
   Color get _textColor =>
-      widget.darkMode ? Colors.white : const Color(0xFF2C3E50);
+      widget.darkMode ? Colors.white : const Color(0xFF17212B);
 
   Color get _mutedColor =>
-      widget.darkMode ? const Color(0xFF95A5A6) : const Color(0xFF7F8C8D);
+      widget.darkMode ? const Color(0xFFB5C0CB) : Colors.black54;
 
   @override
   void initState() {
@@ -117,8 +117,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Future<void> _configureVoice() async {
     try {
       await _tts.setLanguage('ar');
-      await _tts.setSpeechRate(0.46);
-      await _tts.setVolume(1);
+      await _tts.setSpeechRate(0.45);
+      await _tts.setVolume(1.0);
     } catch (_) {}
   }
 
@@ -140,12 +140,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
     try {
       final enabled = await Geolocator.isLocationServiceEnabled();
+
       if (!enabled) {
         _setLocationError('فعّل GPS من إعدادات الهاتف');
         return;
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
+
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
@@ -159,21 +161,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 20),
+          timeLimit: Duration(seconds: 15),
         ),
       );
 
       if (!mounted) return;
 
       _currentLocation = LatLng(position.latitude, position.longitude);
-      if (position.heading >= 0) _heading = position.heading;
-      _speedKmh = math.max(0, position.speed * 3.6);
 
+      if (position.heading >= 0) {
+        _heading = position.heading;
+      }
+
+      _speedKmh = math.max(0, position.speed * 3.6);
       _mapController.move(_currentLocation, 16);
 
       setState(() {
         _loadingLocation = false;
-        _statusMessage = 'تم تحديد موقعك';
+        _statusMessage = 'تم تحديد موقعك بنجاح';
       });
     } catch (_) {
       _setLocationError('تعذّر تحديد الموقع. تحقق من GPS والإنترنت');
@@ -182,6 +187,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   void _setLocationError(String message) {
     if (!mounted) return;
+
     setState(() {
       _loadingLocation = false;
       _statusMessage = message;
@@ -190,14 +196,21 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   Future<void> _startTracking() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
+
+    if (!serviceEnabled) {
+      _showMessage('فعّل GPS أولاً');
+      return;
+    }
 
     var permission = await Geolocator.checkPermission();
+
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
+
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
+      _showMessage('التطبيق يحتاج إذن الموقع');
       return;
     }
 
@@ -211,11 +224,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
     ).listen(
       (position) {
         if (!mounted) return;
+
         _currentLocation = LatLng(position.latitude, position.longitude);
 
         if (position.heading >= 0 && position.speed > 0.8) {
           _heading = position.heading;
         }
+
         _speedKmh = math.max(0, position.speed * 3.6);
 
         if (_followingLocation) {
@@ -225,16 +240,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
           );
         }
 
-        if (_navigating) _updateProgress();
+        if (_navigating) {
+          _updateProgress();
+        }
+
         if (mounted) setState(() {});
       },
-      onError: (_) {},
+      onError: (_) {
+        if (mounted) {
+          setState(() => _statusMessage = 'تعذّر تحديث GPS');
+        }
+      },
     );
   }
 
   Future<void> _searchPlaces(String query) async {
     if (query.trim().isEmpty) {
-      _showMessage('اكتب اسم المكان اللي تريد تبحث عنه');
+      _showMessage('اكتب اسم المكان الذي تريد البحث عنه');
       return;
     }
 
@@ -262,12 +284,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
       final response = await http.get(
         uri,
         headers: {
-          'User-Agent': 'DaleelIraq/1.0',
+          'User-Agent': 'DaleelIraqApp/1.0 (contact@daleeliraq.app)',
           'Accept-Language': 'ar',
         },
       ).timeout(const Duration(seconds: 15));
 
-      if (response.statusCode != 200) throw Exception('Search failed');
+      if (response.statusCode != 200) {
+        throw Exception('Search failed');
+      }
 
       final results = jsonDecode(response.body) as List;
 
@@ -276,20 +300,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
       setState(() {
         _searchResults = results;
         _searching = false;
-        _statusMessage = results.isEmpty ? 'ما لكينا نتائج لهذا البحث' : 'اختار المكان';
+        _statusMessage = results.isEmpty
+            ? 'لم نجد نتائج لهذا البحث'
+            : 'اختر المكان المطلوب';
       });
 
       if (results.isEmpty) {
-        _showMessage('ما لكينا نتائج. جرّب اسماً آخر');
+        _showMessage('لم نجد نتائج. جرّب اسماً آخر');
       } else {
         _showSearchResults();
       }
     } catch (_) {
       if (!mounted) return;
+
       setState(() {
         _searching = false;
-        _statusMessage = 'تعذّر البحث. تحقق من الإنترنت';
+        _statusMessage = 'تعذّر البحث. تحقق من الاتصال بالإنترنت';
       });
+
       _showMessage('فشل البحث. حاول بعد قليل');
     }
   }
@@ -304,7 +332,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
           height: MediaQuery.of(context).size.height * 0.62,
           decoration: BoxDecoration(
             color: _panelColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
           ),
           child: Column(
             children: [
@@ -321,7 +351,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 padding: const EdgeInsets.all(18),
                 child: Row(
                   children: [
-                    Icon(Icons.search_rounded, color: _wazeGreen),
+                    Icon(Icons.search_rounded, color: _green),
                     const SizedBox(width: 10),
                     Text(
                       'نتائج البحث',
@@ -343,18 +373,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
                   ),
                   itemBuilder: (context, index) {
                     final item = _searchResults[index];
-                    final name = (item['name'] ?? item['display_name'] ?? 'مكان').toString();
+                    final name =
+                        (item['name'] ?? item['display_name'] ?? 'مكان')
+                            .toString();
 
                     return ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: _wazeGreen.withValues(alpha: 0.15),
-                        child: Icon(Icons.place, color: _wazeGreen),
+                        backgroundColor: _green.withValues(alpha: 0.14),
+                        child: Icon(Icons.place, color: _green),
                       ),
                       title: Text(
                         name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: _textColor, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          color: _textColor,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       subtitle: Text(
                         (item['display_name'] ?? '').toString(),
@@ -365,6 +400,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                       onTap: () {
                         final lat = double.tryParse(item['lat'].toString());
                         final lon = double.tryParse(item['lon'].toString());
+
                         if (lat == null || lon == null) return;
 
                         _destination = LatLng(lat, lon);
@@ -373,7 +409,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
                         _mapController.move(_destination!, 15);
                         Navigator.pop(sheetContext);
-                        setState(() => _statusMessage = 'تم اختيار $_destinationName');
+
+                        setState(() {
+                          _statusMessage = 'تم اختيار: $_destinationName';
+                        });
+
                         _showMessage('تم اختيار $_destinationName');
                       },
                     );
@@ -393,7 +433,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       return;
     }
 
-    setState(() => _statusMessage = 'جارٍ حساب الطريق...');
+    setState(() => _statusMessage = 'جارٍ حساب المسار...');
 
     try {
       final start = _currentLocation;
@@ -406,18 +446,30 @@ class _NavigationScreenState extends State<NavigationScreen> {
         '?overview=full&geometries=geojson&steps=true',
       );
 
-      final response = await http.get(uri).timeout(const Duration(seconds: 20));
-      if (response.statusCode != 200) throw Exception('Route failed');
+      final response = await http.get(
+        uri,
+        headers: {'User-Agent': 'DaleelIraqApp/1.0'},
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode != 200) {
+        throw Exception('Route request failed');
+      }
 
       final data = jsonDecode(response.body);
       final routes = data['routes'] as List?;
-      if (routes == null || routes.isEmpty) throw Exception('No route');
+
+      if (routes == null || routes.isEmpty) {
+        throw Exception('No route');
+      }
 
       final route = routes.first;
       final coordinates = route['geometry']['coordinates'] as List;
 
       final points = coordinates.map<LatLng>((point) {
-        return LatLng((point[1] as num).toDouble(), (point[0] as num).toDouble());
+        return LatLng(
+          (point[1] as num).toDouble(),
+          (point[0] as num).toDouble(),
+        );
       }).toList();
 
       if (!mounted) return;
@@ -426,7 +478,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
         _routePoints = points;
         _remainingKm = (route['distance'] as num).toDouble() / 1000;
         _remainingMinutes = (route['duration'] as num).toDouble() / 60;
-        _statusMessage = 'تم حساب المسار';
+        _statusMessage = 'تم حساب المسار بنجاح';
       });
 
       if (points.isNotEmpty) {
@@ -437,11 +489,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
           ),
         );
       }
+
       _showMessage('تم حساب المسار بنجاح');
     } catch (_) {
       if (!mounted) return;
+
       setState(() => _statusMessage = 'تعذّر حساب الطريق');
-      _showMessage('تعذّر حساب الطريق. تحقق من الإنترنت');
+      _showMessage('تعذّر حساب الطريق. تحقق من الاتصال بالإنترنت');
     }
   }
 
@@ -450,6 +504,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       _showMessage('حدد وجهتك من البحث أولاً');
       return;
     }
+
     if (_routePoints.isEmpty) {
       await _calculateRoute();
       if (_routePoints.isEmpty) return;
@@ -458,10 +513,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
     setState(() {
       _navigating = true;
       _followingLocation = true;
-      _statusMessage = 'الملاحة إلى $_destinationName';
+      _statusMessage = 'جاري الملاحة إلى $_destinationName';
     });
 
     await _startTracking();
+
     try {
       await _tts.speak('بدأت الملاحة. انتبه للطريق');
     } catch (_) {}
@@ -470,11 +526,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Future<void> _stopNavigation() async {
     await _positionSubscription?.cancel();
     _positionSubscription = null;
+
     try {
       await _tts.stop();
     } catch (_) {}
 
     if (!mounted) return;
+
     setState(() {
       _navigating = false;
       _followingLocation = false;
@@ -489,7 +547,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
     double nearestDistance = double.infinity;
 
     for (int i = 0; i < _routePoints.length; i++) {
-      final d = _distance.as(LengthUnit.Meter, _currentLocation, _routePoints[i]);
+      final d = _distance.as(
+        LengthUnit.Meter,
+        _currentLocation,
+        _routePoints[i],
+      );
+
       if (d < nearestDistance) {
         nearestDistance = d;
         nearestIndex = i;
@@ -497,29 +560,39 @@ class _NavigationScreenState extends State<NavigationScreen> {
     }
 
     double remainingMeters = 0;
+
     for (int i = nearestIndex; i < _routePoints.length - 1; i++) {
-      remainingMeters += _distance.as(LengthUnit.Meter, _routePoints[i], _routePoints[i + 1]);
+      remainingMeters += _distance.as(
+        LengthUnit.Meter,
+        _routePoints[i],
+        _routePoints[i + 1],
+      );
     }
 
     _remainingKm = remainingMeters / 1000;
+
     if (_speedKmh > 1) {
       _remainingMinutes = remainingMeters / (_speedKmh / 3.6) / 60;
     }
 
-    if (remainingMeters < 35 && _navigating) {
+    if (remainingMeters < 30 && _navigating) {
       _stopNavigation();
-      _tts.speak('وصلت إلى وجهتك');
+      _tts.speak('وصلت إلى وجهتك بنجاح');
     }
   }
 
   void _showMessage(String message) {
     if (!mounted) return;
+
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message),
-          backgroundColor: _wazeGreen,
+          content: Text(
+            message,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: _green,
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 2),
         ),
@@ -534,8 +607,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }) {
     return Material(
       color: _panelColor,
-      elevation: 4,
-      shadowColor: Colors.black.withValues(alpha: 0.15),
+      elevation: 5,
+      shadowColor: Colors.black.withValues(alpha: 0.2),
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
@@ -545,7 +618,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
           height: 48,
           child: Tooltip(
             message: tooltip ?? '',
-            child: Icon(icon, color: iconColor ?? _textColor, size: 23),
+            child: Icon(
+              icon,
+              color: iconColor ?? _textColor,
+              size: 23,
+            ),
           ),
         ),
       ),
@@ -554,33 +631,33 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   Widget _searchBar() {
     return Container(
-      height: 54,
+      height: 57,
       decoration: BoxDecoration(
         color: _panelColor,
-        borderRadius: BorderRadius.circular(27),
+        borderRadius: BorderRadius.circular(19),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 15,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 18,
+            offset: const Offset(0, 5),
           ),
         ],
       ),
       child: Row(
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Icon(Icons.search_rounded, color: _wazeGreen, size: 26),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Icon(Icons.search_rounded, color: _green, size: 27),
           ),
           Expanded(
             child: TextField(
               controller: _searchController,
               textInputAction: TextInputAction.search,
               onSubmitted: _searchPlaces,
-              style: TextStyle(color: _textColor, fontWeight: FontWeight.w600),
+              style: TextStyle(color: _textColor),
               decoration: InputDecoration(
-                hintText: 'إلى أين؟ (ابحث عن مكان في العراق...)',
-                hintStyle: TextStyle(color: _mutedColor, fontWeight: FontWeight.normal),
+                hintText: 'وين تريد تروح؟ (مثلاً: بغداد، الصويرة...)',
+                hintStyle: TextStyle(color: _mutedColor, fontSize: 14),
                 border: InputBorder.none,
               ),
             ),
@@ -591,13 +668,16 @@ class _NavigationScreenState extends State<NavigationScreen> {
               child: SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: _wazeGreen),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _green,
+                ),
               ),
             )
           else
             IconButton(
               onPressed: () => _searchPlaces(_searchController.text),
-              icon: Icon(Icons.arrow_forward_rounded, color: _wazeGreen),
+              icon: Icon(Icons.arrow_forward_rounded, color: _green),
             ),
         ],
       ),
@@ -607,32 +687,32 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Widget _topPanel() {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: 46,
+                  height: 46,
                   decoration: BoxDecoration(
-                    color: _wazeGreen,
-                    borderRadius: BorderRadius.circular(14),
+                    color: _green,
+                    borderRadius: BorderRadius.circular(15),
                     boxShadow: [
                       BoxShadow(
-                        color: _wazeGreen.withValues(alpha: 0.3),
-                        blurRadius: 10,
+                        color: _green.withValues(alpha: 0.3),
+                        blurRadius: 12,
                       ),
                     ],
                   ),
                   child: const Icon(
                     Icons.navigation_rounded,
-                    color: Colors.white,
-                    size: 26,
+                    color: Color(0xFF10231E),
+                    size: 28,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 11),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -641,24 +721,26 @@ class _NavigationScreenState extends State<NavigationScreen> {
                         'دليل العراق',
                         style: TextStyle(
                           color: _textColor,
-                          fontSize: 18,
+                          fontSize: 20,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
                       Text(
-                        'الملاحة الذكية',
+                        'طريقك أسهل',
                         style: TextStyle(
                           color: _mutedColor,
-                          fontSize: 11,
+                          fontSize: 12,
                         ),
                       ),
                     ],
                   ),
                 ),
                 _roundButton(
-                  icon: widget.darkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+                  icon: widget.darkMode
+                      ? Icons.light_mode_rounded
+                      : Icons.dark_mode_rounded,
                   tooltip: widget.darkMode ? 'الوضع النهاري' : 'الوضع الليلي',
-                  iconColor: _wazeGreen,
+                  iconColor: _green,
                   onTap: widget.onThemeChanged,
                 ),
               ],
@@ -675,24 +757,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
     return Transform.rotate(
       angle: _heading * math.pi / 180,
       child: Container(
-        width: 50,
-        height: 50,
+        width: 48,
+        height: 48,
         decoration: BoxDecoration(
-          color: _wazeBlue,
+          color: _green,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 3.5),
+          border: Border.all(color: Colors.white, width: 3),
           boxShadow: [
             BoxShadow(
-              color: _wazeBlue.withValues(alpha: 0.5),
-              blurRadius: 14,
+              color: _green.withValues(alpha: 0.45),
+              blurRadius: 16,
               spreadRadius: 2,
             ),
           ],
         ),
         child: const Icon(
           Icons.navigation_rounded,
-          color: Colors.white,
-          size: 26,
+          color: Color(0xFF10231E),
+          size: 27,
         ),
       ),
     );
@@ -701,8 +783,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Widget _stat(IconData icon, String value, String label) {
     return Column(
       children: [
-        Icon(icon, color: _wazeGreen, size: 22),
-        const SizedBox(height: 4),
+        Icon(icon, color: _green, size: 23),
+        const SizedBox(height: 6),
         Text(
           value,
           style: TextStyle(
@@ -711,7 +793,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 3),
         Text(
           label,
           style: TextStyle(color: _mutedColor, fontSize: 11),
@@ -725,18 +807,18 @@ class _NavigationScreenState extends State<NavigationScreen> {
     return SafeArea(
       top: false,
       child: Container(
-        margin: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: _panelColor,
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(25),
           border: Border.all(
-            color: _wazeGreen.withValues(alpha: 0.15),
+            color: _green.withValues(alpha: 0.13),
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 20,
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 24,
               offset: const Offset(0, 5),
             ),
           ],
@@ -747,38 +829,40 @@ class _NavigationScreenState extends State<NavigationScreen> {
             Row(
               children: [
                 Container(
-                  width: 42,
-                  height: 42,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    color: _wazeGreen.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
+                    color: _green.withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(14),
                   ),
                   child: Icon(
-                    _navigating ? Icons.navigation_rounded : Icons.explore_rounded,
-                    color: _wazeGreen,
-                    size: 24,
+                    _navigating
+                        ? Icons.navigation_rounded
+                        : Icons.explore_rounded,
+                    color: _green,
+                    size: 25,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 11),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         _navigating
-                            ? 'الملاحة شغّالة الآن'
+                            ? 'الملاحة نشطة'
                             : _destinationName.isNotEmpty
                                 ? _destinationName
-                                : 'إلى أين تريد الذهاب اليوم؟',
+                                : 'وين وجهتك اليوم؟',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: _textColor,
                           fontWeight: FontWeight.bold,
-                          fontSize: 15,
+                          fontSize: 16,
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 4),
                       Text(
                         _statusMessage,
                         maxLines: 1,
@@ -793,18 +877,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 ),
                 if (_loadingLocation)
                   SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: _wazeGreen),
+                    width: 21,
+                    height: 21,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _green,
+                    ),
                   )
                 else
-                  Icon(Icons.circle, color: _wazeGreen, size: 10),
+                  Icon(Icons.circle, color: _green, size: 10),
               ],
             ),
             if (_routePoints.isNotEmpty || _navigating) ...[
-              const SizedBox(height: 14),
-              Divider(height: 1, color: _mutedColor.withValues(alpha: 0.2)),
-              const SizedBox(height: 14),
+              const SizedBox(height: 15),
+              Divider(
+                height: 1,
+                color: _mutedColor.withValues(alpha: 0.2),
+              ),
+              const SizedBox(height: 15),
               Row(
                 children: [
                   Expanded(
@@ -818,48 +908,50 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     child: _stat(
                       Icons.schedule_rounded,
                       '${_remainingMinutes.round()} د',
-                      'الوقت',
+                      'الوقت التقريبي',
                     ),
                   ),
                   Expanded(
                     child: _stat(
                       Icons.speed_rounded,
                       '${_speedKmh.round()}',
-                      'كم/س',
+                      'كم/ساعة',
                     ),
                   ),
                 ],
               ),
             ],
-            const SizedBox(height: 14),
+            const SizedBox(height: 15),
             Row(
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: _navigating ? _stopNavigation : _startNavigation,
                     icon: Icon(
-                      _navigating ? Icons.stop_circle_outlined : Icons.navigation_rounded,
-                      color: Colors.white,
+                      _navigating
+                          ? Icons.stop_circle_outlined
+                          : Icons.navigation_rounded,
                     ),
                     label: Text(
                       _navigating ? 'إيقاف الملاحة' : 'ابدأ الملاحة',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _navigating ? Colors.redAccent : _wazeGreen,
-                      minimumSize: const Size(0, 50),
+                      backgroundColor:
+                          _navigating ? Colors.redAccent : _green,
+                      foregroundColor: const Color(0xFF10231E),
+                      minimumSize: const Size(0, 51),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      elevation: 0,
                     ),
                   ),
                 ),
                 const SizedBox(width: 10),
                 _roundButton(
                   icon: Icons.alt_route_rounded,
-                  tooltip: 'إعادة حساب الطريق',
-                  iconColor: _wazeGreen,
+                  tooltip: 'احسب الطريق',
+                  iconColor: _green,
                   onTap: _calculateRoute,
                 ),
               ],
@@ -872,10 +964,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // تم استخدام مزود OpenStreetMap مجاني ونظيف بالكامل وبدون أي اشتراك أو مفتاح API
-    final tileUrl = widget.darkMode
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' // خريطة داكنة مجانية بالكامل
-        : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'; // خريطة افتتاحية واضحة ومجانية
+    // تم تحديث الرابط هنا ليكون OpenStreetMap المجاني بالكامل بدون أي مفتاح API
+    final tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
     return Scaffold(
       body: Stack(
@@ -885,7 +975,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
               mapController: _mapController,
               options: MapOptions(
                 initialCenter: _currentLocation,
-                initialZoom: 14,
+                initialZoom: 13,
                 minZoom: 4,
                 maxZoom: 19,
                 interactionOptions: const InteractionOptions(
@@ -909,12 +999,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
                       Polyline(
                         points: _routePoints,
                         strokeWidth: 10,
-                        color: _wazeBlue.withValues(alpha: 0.3),
+                        color: const Color(0xFF1688FF).withValues(alpha: 0.25),
                       ),
                       Polyline(
                         points: _routePoints,
-                        strokeWidth: 6,
-                        color: _wazeBlue,
+                        strokeWidth: 5,
+                        color: const Color(0xFF1688FF),
                       ),
                     ],
                   ),
@@ -934,7 +1024,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                         child: const Icon(
                           Icons.location_on_rounded,
                           color: Colors.redAccent,
-                          size: 45,
+                          size: 43,
                         ),
                       ),
                   ],
@@ -947,14 +1037,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ],
             ),
           ),
-
           Positioned(
             top: 0,
             left: 0,
             right: 0,
             child: _topPanel(),
           ),
-
           Positioned(
             left: 14,
             bottom: 250,
@@ -963,14 +1051,17 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 _roundButton(
                   icon: Icons.my_location_rounded,
                   tooltip: 'موقعي',
-                  iconColor: _wazeGreen,
+                  iconColor: _green,
                   onTap: () async {
                     _followingLocation = true;
                     await _getCurrentLocation();
-                    _mapController.move(_currentLocation, _navigating ? 17 : 16);
+                    _mapController.move(
+                      _currentLocation,
+                      _navigating ? 17 : 16,
+                    );
                   },
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 11),
                 _roundButton(
                   icon: Icons.add_rounded,
                   tooltip: 'تكبير',
@@ -982,7 +1073,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     );
                   },
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 11),
                 _roundButton(
                   icon: Icons.remove_rounded,
                   tooltip: 'تصغير',
@@ -997,7 +1088,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ],
             ),
           ),
-
           Positioned(
             bottom: 0,
             left: 0,
