@@ -14,6 +14,23 @@ void main() {
   runApp(const DaleelIraqApp());
 }
 
+/// نموذج التقرير الخاص بالسائقين (Waze-style Report)
+class DriverReport {
+  final String id;
+  final String type; // ازدحام، سيطرة، حادث، شارع مغلق، حفرة
+  final LatLng location;
+  final String description;
+  final DateTime timestamp;
+
+  DriverReport({
+    required this.id,
+    required this.type,
+    required this.location,
+    required this.description,
+    required this.timestamp,
+  });
+}
+
 class DaleelIraqApp extends StatefulWidget {
   const DaleelIraqApp({super.key});
 
@@ -80,6 +97,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   List<LatLng> _routePoints = [];
   List<dynamic> _searchResults = [];
+  final List<DriverReport> _activeReports = [];
 
   StreamSubscription<Position>? _positionSubscription;
 
@@ -87,11 +105,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool _searching = false;
   bool _navigating = false;
   bool _followingLocation = true;
+  bool _isRerouting = false;
 
   double _heading = 0;
   double _speedKmh = 0;
   double _remainingKm = 0;
   double _remainingMinutes = 0;
+  final double _speedLimit = 100; // حد السرعة الافتراضي
 
   String _statusMessage = 'أهلاً بك في دليل العراق';
   String _destinationName = '';
@@ -231,7 +251,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
           _heading = position.heading;
         }
 
-        _speedKmh = math.max(0, position.speed * 3.6);
+        double newSpeed = math.max(0, position.speed * 3.6);
+        
+        // تنبيه تجاوز السرعة (Speed Camera Alert)
+        if (newSpeed > _speedLimit && _speedKmh <= _speedLimit) {
+          _tts.speak('تنبيه! تجاوزت السرعة المسموحة');
+        }
+        _speedKmh = newSpeed;
 
         if (_followingLocation) {
           _mapController.move(
@@ -241,7 +267,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
         }
 
         if (_navigating) {
-          _updateProgress();
+          _updateProgressAndRerouteIfNeeded();
         }
 
         if (mounted) setState(() {});
@@ -252,6 +278,65 @@ class _NavigationScreenState extends State<NavigationScreen> {
         }
       },
     );
+  }
+
+  /// إعادة حساب المسار التلقائي في حال الخروج عن الطريق (Off-Route Rerouting)
+  void _updateProgressAndRerouteIfNeeded() {
+    if (_routePoints.isEmpty || _destination == null || _isRerouting) return;
+
+    int nearestIndex = 0;
+    double minDistance = double.infinity;
+
+    for (int i = 0; i < _routePoints.length; i++) {
+      final d = _distance.as(
+        LengthUnit.Meter,
+        _currentLocation,
+        _routePoints[i],
+      );
+
+      if (d < minDistance) {
+        minDistance = d;
+        nearestIndex = i;
+      }
+    }
+
+    // إذا ابتعد السائق عن المسار أكثر من 40 متراً، يُعاد التوجيه تلقائياً
+    if (minDistance > 40) {
+      _triggerAutoReroute();
+      return;
+    }
+
+    double remainingMeters = 0;
+    for (int i = nearestIndex; i < _routePoints.length - 1; i++) {
+      remainingMeters += _distance.as(
+        LengthUnit.Meter,
+        _routePoints[i],
+        _routePoints[i + 1],
+      );
+    }
+
+    _remainingKm = remainingMeters / 1000;
+
+    if (_speedKmh > 1) {
+      _remainingMinutes = remainingMeters / (_speedKmh / 3.6) / 60;
+    }
+
+    if (remainingMeters < 30 && _navigating) {
+      _stopNavigation();
+      _tts.speak('وصلت إلى وجهتك بنجاح');
+    }
+  }
+
+  Future<void> _triggerAutoReroute() async {
+    _isRerouting = true;
+    setState(() => _statusMessage = 'تم الخروج عن المسار، جارٍ إعادة التوجيه...');
+    try {
+      await _tts.speak('جارٍ إعادة حساب المسار');
+      await _calculateRoute(showSnackbar: false);
+    } catch (_) {
+    } finally {
+      _isRerouting = false;
+    }
   }
 
   Future<void> _searchPlaces(String query) async {
@@ -284,7 +369,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       final response = await http.get(
         uri,
         headers: {
-          'User-Agent': 'DaleelIraqApp/1.0 (contact@daleeliraq.app)',
+          'User-Agent': 'DaleelIraqApp/1.0',
           'Accept-Language': 'ar',
         },
       ).timeout(const Duration(seconds: 15));
@@ -427,9 +512,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
-  Future<void> _calculateRoute() async {
+  Future<void> _calculateRoute({bool showSnackbar = true}) async {
     if (_destination == null) {
-      _showMessage('ابحث عن وجهتك أولاً');
+      if (showSnackbar) _showMessage('ابحث عن وجهتك أولاً');
       return;
     }
 
@@ -490,12 +575,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
         );
       }
 
-      _showMessage('تم حساب المسار بنجاح');
+      if (showSnackbar) _showMessage('تم حساب المسار بنجاح');
     } catch (_) {
       if (!mounted) return;
 
       setState(() => _statusMessage = 'تعذّر حساب الطريق');
-      _showMessage('تعذّر حساب الطريق. تحقق من الاتصال بالإنترنت');
+      if (showSnackbar) _showMessage('تعذّر حساب الطريق. تحقق من الإنترنت');
     }
   }
 
@@ -540,44 +625,122 @@ class _NavigationScreenState extends State<NavigationScreen> {
     });
   }
 
-  void _updateProgress() {
-    if (_routePoints.isEmpty || _destination == null) return;
+  /// نافذة إضافة تقرير سائق (Waze Report BottomSheet)
+  void _showAddReportModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: _panelColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'إبلاغ السائقين (Waze Report)',
+                style: TextStyle(
+                  color: _textColor,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 15),
+              GridView.count(
+                shrinkWrap: true,
+                crossAxisCount: 3,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                children: [
+                  _reportOption(ctx, 'ازدحام مروري', Icons.traffic, Colors.orange),
+                  _reportOption(ctx, 'سيطرة', Icons.local_police, Colors.blue),
+                  _reportOption(ctx, 'حادث سير', Icons.warning_rounded, Colors.red),
+                  _reportOption(ctx, 'شارع مغلق', Icons.block, Colors.purple),
+                  _reportOption(ctx, 'حفرة / صيانة', Icons.construction, Colors.amber),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
-    int nearestIndex = 0;
-    double nearestDistance = double.infinity;
+  Widget _reportOption(
+      BuildContext ctx, String label, IconData icon, Color color) {
+    return InkWell(
+      onTap: () {
+        Navigator.pop(ctx);
+        setState(() {
+          _activeReports.add(
+            DriverReport(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              type: label,
+              location: _currentLocation,
+              description: 'بلاغ عن $label بواسطة سائق قريب',
+              timestamp: DateTime.now(),
+            ),
+          );
+        });
+        _showMessage('تمت إضافة البلاغ: $label');
+        _tts.speak('تمت إضافة التنبيه بنجاح');
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color, width: 1.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 30),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: _textColor,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-    for (int i = 0; i < _routePoints.length; i++) {
-      final d = _distance.as(
-        LengthUnit.Meter,
-        _currentLocation,
-        _routePoints[i],
-      );
-
-      if (d < nearestDistance) {
-        nearestDistance = d;
-        nearestIndex = i;
-      }
+  IconData _getReportIcon(String type) {
+    switch (type) {
+      case 'ازدحام مروري':
+        return Icons.traffic;
+      case 'سيطرة':
+        return Icons.local_police;
+      case 'حادث سير':
+        return Icons.warning_rounded;
+      case 'شارع مغلق':
+        return Icons.block;
+      default:
+        return Icons.construction;
     }
+  }
 
-    double remainingMeters = 0;
-
-    for (int i = nearestIndex; i < _routePoints.length - 1; i++) {
-      remainingMeters += _distance.as(
-        LengthUnit.Meter,
-        _routePoints[i],
-        _routePoints[i + 1],
-      );
-    }
-
-    _remainingKm = remainingMeters / 1000;
-
-    if (_speedKmh > 1) {
-      _remainingMinutes = remainingMeters / (_speedKmh / 3.6) / 60;
-    }
-
-    if (remainingMeters < 30 && _navigating) {
-      _stopNavigation();
-      _tts.speak('وصلت إلى وجهتك بنجاح');
+  Color _getReportColor(String type) {
+    switch (type) {
+      case 'ازدحام مروري':
+        return Colors.orange;
+      case 'سيطرة':
+        return Colors.blue;
+      case 'حادث سير':
+        return Colors.red;
+      case 'شارع مغلق':
+        return Colors.purple;
+      default:
+        return Colors.amber;
     }
   }
 
@@ -656,7 +819,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
               onSubmitted: _searchPlaces,
               style: TextStyle(color: _textColor),
               decoration: InputDecoration(
-                hintText: 'وين تريد تروح؟ (مثلاً: بغداد، الصويرة...)',
+                hintText: 'وين تريد تروح؟ (مثلاً: بغداد، الكرادة...)',
                 hintStyle: TextStyle(color: _mutedColor, fontSize: 14),
                 border: InputBorder.none,
               ),
@@ -760,12 +923,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
         width: 48,
         height: 48,
         decoration: BoxDecoration(
-          color: _green,
+          color: _speedKmh > _speedLimit ? Colors.red : _green,
           shape: BoxShape.circle,
           border: Border.all(color: Colors.white, width: 3),
           boxShadow: [
             BoxShadow(
-              color: _green.withValues(alpha: 0.45),
+              color: (_speedKmh > _speedLimit ? Colors.red : _green)
+                  .withValues(alpha: 0.45),
               blurRadius: 16,
               spreadRadius: 2,
             ),
@@ -780,15 +944,15 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
-  Widget _stat(IconData icon, String value, String label) {
+  Widget _stat(IconData icon, String value, String label, {Color? color}) {
     return Column(
       children: [
-        Icon(icon, color: _green, size: 23),
+        Icon(icon, color: color ?? _green, size: 23),
         const SizedBox(height: 6),
         Text(
           value,
           style: TextStyle(
-            color: _textColor,
+            color: color ?? _textColor,
             fontSize: 15,
             fontWeight: FontWeight.bold,
           ),
@@ -804,6 +968,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }
 
   Widget _bottomPanel() {
+    bool speedWarning = _speedKmh > _speedLimit;
+
     return SafeArea(
       top: false,
       child: Container(
@@ -813,7 +979,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
           color: _panelColor,
           borderRadius: BorderRadius.circular(25),
           border: Border.all(
-            color: _green.withValues(alpha: 0.13),
+            color: speedWarning
+                ? Colors.red.withValues(alpha: 0.5)
+                : _green.withValues(alpha: 0.13),
+            width: speedWarning ? 2 : 1,
           ),
           boxShadow: [
             BoxShadow(
@@ -916,6 +1085,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                       Icons.speed_rounded,
                       '${_speedKmh.round()}',
                       'كم/ساعة',
+                      color: speedWarning ? Colors.red : null,
                     ),
                   ),
                 ],
@@ -964,8 +1134,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // تم تحديث الرابط هنا ليكون OpenStreetMap المجاني بالكامل بدون أي مفتاح API
-    final tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    // خريطة OpenStreetMap مستقرة ومجانية
+    const tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
     return Scaffold(
       body: Stack(
@@ -1027,6 +1197,27 @@ class _NavigationScreenState extends State<NavigationScreen> {
                           size: 43,
                         ),
                       ),
+                    // عرض التقارير التي تم الإبلاغ عنها على الخريطة
+                    ..._activeReports.map((report) {
+                      return Marker(
+                        point: report.location,
+                        width: 40,
+                        height: 40,
+                        child: GestureDetector(
+                          onTap: () {
+                            _showMessage('${report.type}: ${report.description}');
+                          },
+                          child: CircleAvatar(
+                            backgroundColor: _getReportColor(report.type),
+                            child: Icon(
+                              _getReportIcon(report.type),
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
                   ],
                 ),
                 RichAttributionWidget(
@@ -1048,6 +1239,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
             bottom: 250,
             child: Column(
               children: [
+                // زر الإبلاغ عن تنبيه على الطريق (Waze Report Button)
+                _roundButton(
+                  icon: Icons.add_alert_rounded,
+                  tooltip: 'إبلاغ عن تنبيه',
+                  iconColor: Colors.amber,
+                  onTap: _showAddReportModal,
+                ),
+                const SizedBox(height: 11),
                 _roundButton(
                   icon: Icons.my_location_rounded,
                   tooltip: 'موقعي',
